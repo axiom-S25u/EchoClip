@@ -17,3 +17,4 @@ install FFmpeg API and Custom Keybinds. set a hotkey in the settings. hit the bu
 
 why
 because i'm tired of laggy recorders. suffering has begun.
+please report all bugs in the github. 

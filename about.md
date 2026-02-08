@@ -14,3 +14,4 @@ buffer: 27,000 frames providing a 15 minute rolling window.
 performance: background threaded so the game stays at your monitor's refresh rate.
 
 written by axiom because i needed a clipper that didn't crash on xl levels.
+please report all bugs in the github. thank you.
