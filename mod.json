@@ -12,7 +12,7 @@
     "links": {
         "source": "https://github.com/axiom-S25u/EchoClip"
     },
-    "tags": ["performance", "utility", "experimental"],
+    "tags": ["performance", "utility", "enhancement"],
     "dependencies": [
         {
             "id": "geode.node-ids",
