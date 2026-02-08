@@ -6,55 +6,54 @@
     },
     "id": "axiom.echoclip",
     "name": "EchoClip",
-    "version": "v1.0.0",
+    "version": "v1.0.0-beta.1",
     "developer": "Axiom",
-    "description": "Continuous background recording of your last 5 attempts. No buffering, writes straight to disk so your PC doesn't combust. Press the hotkey to save. Works or doesn't, who knows anymore.",
+    "description": "BETA: Continuous RAM-based recording. Press F6 to save. Might crash AMD drivers.",
+    "links": {
+        "source": "https://github.com/axiom-S25u/EchoClip"
+    },
+    "tags": ["performance", "utility", "experimental"],
     "dependencies": [
         {
             "id": "geode.node-ids",
-            "version": ">=v1.20.0",
+            "version": ">=1.9.2",
             "importance": "required"
         },
         {
             "id": "geode.custom-keybinds",
-            "version": ">=v1.0.0",
+            "version": ">=1.9.0",
+            "importance": "required"
+        },
+        {
+            "id": "eclipse.ffmpeg-api",
+            "version": ">=1.2.2",
             "importance": "required"
         }
     ],
     "settings": {
         "enable-recording": {
             "name": "Enable Recording",
-            "description": "Turn recording on or off. It'll probably break either way.",
+            "description": "If unchecked, it wont clip",
             "type": "bool",
             "default": true
         },
         "bitrate": {
-            "name": "Video Bitrate (Mbps)",
-            "description": "Quality vs file size. i don't care anymore.",
+            "name": "Bitrate (Mbps)",
             "type": "float",
             "default": 5.0,
-            "min": 2.0,
+            "min": 1.0,
             "max": 20.0
         },
-        "game-audio-volume": {
-            "name": "Game Audio Volume",
-            "description": "How loud the game sounds. default: loud enough to mask my screaming.",
-            "type": "float",
-            "default": 70.0,
-            "min": 0.0,
-            "max": 100.0
-        },
         "mic-audio-volume": {
-            "name": "Microphone Volume",
-            "description": "How loud your suffering sounds.",
+            "name": "Mic Volume",
             "type": "float",
             "default": 30.0,
             "min": 0.0,
             "max": 100.0
         },
         "use-hardware-encoding": {
-            "name": "Use Hardware Encoding",
-            "description": "NVIDIA NVENC if available. pray it's installed.",
+            "name": "Hardware Encoding",
+            "description": "Disable this if your GPU sparks during recording.",
             "type": "bool",
             "default": true
         }
