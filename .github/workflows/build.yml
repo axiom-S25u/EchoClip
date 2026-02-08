@@ -8,17 +8,8 @@ on:
 
 jobs:
   build:
-    strategy:
-      fail-fast: false
-      matrix:
-        config:
-        - name: Windows
-          os: windows-latest
-        - name: macOS
-          os: macos-latest
-
-    name: ${{ matrix.config.name }}
-    runs-on: ${{ matrix.config.os }}
+    name: Windows
+    runs-on: windows-latest
 
     steps:
       - name: Checkout
@@ -29,19 +20,9 @@ jobs:
         with:
           bindings: geode-sdk/bindings
           combine: true
-          target: ${{ matrix.config.target }}
-
-  package:
-    name: Package builds
-    runs-on: ubuntu-latest
-    needs: ['build']
-    steps:
-      - name: Combine platforms
-        uses: geode-sdk/build-geode-mod/combine@main
-        id: build
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: EchoClip-PC-Version
-          path: ${{ steps.build.outputs.build-output }}
+          name: EchoClip-Windows
+          path: "*.geode"

@@ -6,9 +6,7 @@
 #include <thread>
 #include <mutex>
 #include <atomic>
-#ifdef GEODE_IS_WINDOWS
-    #include <windows.h>
-#endif
+#include <windows.h>
 #include <dxgi1_2.h>
 #include <d3d11.h>
 #include <wrl/client.h>
