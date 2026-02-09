@@ -1,5 +1,3 @@
-// fmod microphone capture
-
 #pragma once
 
 #include <Geode/Geode.hpp>
@@ -123,15 +121,19 @@ public:
         std::lock_guard<std::mutex> lock(queueMutex);
         if (audioQueue.empty()) return false;
         
-        outFrame = audioQueue.front();
+        outFrame = std::move(audioQueue.front());
         audioQueue.pop_front();
         return true;
     }
     
     std::vector<AudioFrame> popAllFrames() {
         std::lock_guard<std::mutex> lock(queueMutex);
-        std::vector<AudioFrame> result(audioQueue.begin(), audioQueue.end());
-        audioQueue.clear();
+        std::vector<AudioFrame> result;
+        result.reserve(audioQueue.size());
+        while (!audioQueue.empty()) {
+            result.push_back(std::move(audioQueue.front()));
+            audioQueue.pop_front();
+        }
         return result;
     }
 
@@ -179,7 +181,7 @@ private:
                 
                 {
                     std::lock_guard<std::mutex> lock(queueMutex);
-                    audioQueue.push_back(frame);
+                    audioQueue.push_back(std::move(frame));
                     if (audioQueue.size() > MAX_QUEUE_SIZE) audioQueue.pop_front();
                 }
             }

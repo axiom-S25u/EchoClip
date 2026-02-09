@@ -5,56 +5,65 @@
     },
     "id": "axiom.echoclip",
     "name": "EchoClip",
-    "version": "v1.0.0-beta.1",
+    "version": "1.0.0-beta.2",
     "developer": "Axiom",
-    "description": "BETA: Continuous RAM-based recording. Press F6 to save. Might crash AMD drivers.",
+    "description": "record and clip your gameplay press f6 to save last 5 attempts",
     "links": {
         "source": "https://github.com/axiom-S25u/EchoClip"
     },
-    "tags": ["performance", "utility", "enhancement"],
+    "tags": ["utility"],
     "dependencies": [
-        {
-            "id": "geode.node-ids",
-            "version": ">=1.9.2",
-            "importance": "required"
-        },
         {
             "id": "geode.custom-keybinds",
             "version": ">=1.9.0",
             "importance": "required"
-        },
-        {
-            "id": "eclipse.ffmpeg-api",
-            "version": ">=1.2.2",
-            "importance": "required"
         }
     ],
     "settings": {
-        "enable-recording": {
+        "enabled": {
             "name": "Enable Recording",
-            "description": "If unchecked, it wont clip",
+            "description": "start recording automatically when entering a level",
             "type": "bool",
             "default": true
         },
-        "bitrate": {
-            "name": "Bitrate (Mbps)",
-            "type": "float",
-            "default": 5.0,
-            "min": 1.0,
-            "max": 20.0
-        },
         "mic-audio-volume": {
             "name": "Mic Volume",
+            "description": "microphone volume in percent",
             "type": "float",
             "default": 30.0,
             "min": 0.0,
             "max": 100.0
         },
-        "use-hardware-encoding": {
-            "name": "Hardware Encoding",
-            "description": "Disable this if your GPU sparks during recording.",
-            "type": "bool",
-            "default": true
+        "capture-resolution": {
+            "name": "Capture Resolution",
+            "description": "higher = better quality but more cpu usage",
+            "type": "string",
+            "default": "1280x720",
+            "one-of": ["640x360", "854x480", "1280x720", "1920x1080"]
+        },
+        "target-fps": {
+            "name": "Target FPS",
+            "description": "recording framerate higher = smoother but more cpu usage",
+            "type": "int",
+            "default": 30,
+            "min": 15,
+            "max": 60
+        },
+        "clip-length": {
+            "name": "Clip Length",
+            "description": "how many attempts to keep in the clip",
+            "type": "int",
+            "default": 5,
+            "min": 1,
+            "max": 10
+        },
+        "crf-quality": {
+            "name": "Video Quality",
+            "description": "lower = better quality bigger file 23 is default 18 is visually lossless 28 is small",
+            "type": "int",
+            "default": 23,
+            "min": 18,
+            "max": 35
         }
     }
 }
