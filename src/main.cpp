@@ -1,11 +1,12 @@
 // written by someone who regrets everything
 
+#include <cstring>
 #include <Geode/Geode.hpp>
 #include <Geode/modify/PlayLayer.hpp>
 #include <Geode/modify/MenuLayer.hpp>
 #include <Geode/modify/CCDirector.hpp>
 #include <Geode/binding/PlayLayer.hpp>
-#include <geode.custom-keybinds/include/Keybinds.hpp>
+#include <Geode/utils/keyboard.hpp>
 
 #include <vector>
 #include <deque>
@@ -20,16 +21,22 @@
 #include <iomanip>
 #include <cmath>
 #include <fstream>
+#include <cstdlib>
 
 #include "audio.hpp"
 #include "video_capture.hpp"
 #include "ffmpeg_encoder.hpp"
 
 using namespace geode::prelude;
-using namespace keybinds;
 
-static constexpr const char* TEMP_OUTPUT_PATH = "echoclip_recordings/echoclip_temp.mp4";
-static const std::string OUTPUT_DIR = "echoclip_recordings";
+static std::string getTempOutputPath() {
+    auto dir = Mod::get()->getSaveDir();
+    return (dir / "echoclip_temp.mp4").string();
+}
+
+static std::string getOutputDir() {
+    return Mod::get()->getSaveDir().string();
+}
 static constexpr int DEFAULT_FRAME_WIDTH = 854;
 static constexpr int DEFAULT_FRAME_HEIGHT = 480;
 static constexpr int DEFAULT_TARGET_FPS = 30;
@@ -118,7 +125,8 @@ public:
         if (!getSettingBool("enabled", true)) return false;
 
         loadSettings();
-        std::filesystem::create_directories(OUTPUT_DIR);
+        std::string outputDir = getOutputDir();
+        std::filesystem::create_directories(outputDir);
         
         videoCapture = std::make_unique<ScreenCapture>(targetFPS, frameWidth, frameHeight);
         if (!videoCapture->start()) return false;
@@ -128,7 +136,7 @@ public:
         micCapture->initialize(fmodSystem);
         micCapture->start();
         
-        encoder = std::make_unique<FFmpegEncoder>(TEMP_OUTPUT_PATH, frameWidth, frameHeight, targetFPS);
+        encoder = std::make_unique<FFmpegEncoder>(getTempOutputPath(), frameWidth, frameHeight, targetFPS);
         if (!encoder->initialize()) return false;
         
         isRecording = true;
@@ -201,7 +209,8 @@ public:
         // wait a bit for ffmpeg to write frames
         std::this_thread::sleep_for(std::chrono::milliseconds(500));
         
-        if (!std::filesystem::exists(TEMP_OUTPUT_PATH)) {
+        std::string tempPath = getTempOutputPath();
+        if (!std::filesystem::exists(tempPath)) {
             log::error("echoclip: temp file missing");
             return false;
         }
@@ -228,7 +237,7 @@ public:
         std::ostringstream cmd;
         cmd << "ffmpeg -y -ss " << std::fixed << std::setprecision(3) << startTime
             << " -t " << duration
-            << " -i \"" << TEMP_OUTPUT_PATH << "\""
+            << " -i \"" << tempPath << "\""
             << " -c:v copy -c:a copy -avoid_negative_ts make_zero "
             << "-fflags +genpts \"" << outputPath << "\"";
         
@@ -239,7 +248,7 @@ public:
 
     std::string generateClipFilename() {
         std::lock_guard<std::mutex> lock(attemptMutex);
-        if (attemptMarkers.empty()) return std::string(OUTPUT_DIR) + "/clip_error.mp4";
+        if (attemptMarkers.empty()) return getOutputDir() + "/clip_error.mp4";
         
         std::string levelName = attemptMarkers.front().levelName;
         int gdAttempt = attemptMarkers.front().gdAttemptCount;
@@ -251,19 +260,33 @@ public:
         }
         
         std::ostringstream filename;
-        filename << OUTPUT_DIR << "/clip_" << (cleanName.empty() ? "unknown" : cleanName) 
+        filename << getOutputDir() << "/clip_" << (cleanName.empty() ? "unknown" : cleanName) 
                  << "_att" << gdAttempt << ".mp4";
         return filename.str();
     }
 };
 
-static std::unique_ptr<EchoClipEngine> g_engine;
+static std::unique_ptr<EchoClipEngine> g_engine = []() {
+    std::filesystem::create_directories(getOutputDir());
+    return std::make_unique<EchoClipEngine>();
+}();
 
-class $modify(AutoStartMenu, MenuLayer) {
-    bool init() {
-        if (!MenuLayer::init()) return false;
-        if (g_engine && !g_engine->isRecording) g_engine->initialize();
-        return true;
+class $modify(KeyboardHandlerDirector, CCDirector) {
+    void update(float dt) {
+        CCDirector::update(dt);
+        
+        if (GetAsyncKeyState(VK_F6) & 0x8000) {
+            if (!g_engine || !g_engine->isRecording) {
+                showNotification("engine is off", true);
+                return;
+            }
+            showNotification("clipping...");
+            std::string path = g_engine->generateClipFilename();
+            std::thread([path]() {
+                if (g_engine->exportClip(path)) showNotification("clipped");
+                else showNotification("save failed", true);
+            }).detach();
+        }
     }
 };
 
@@ -278,29 +301,3 @@ class $modify(PlayLayerEchoClip, PlayLayer) {
         PlayLayer::levelComplete();
     }
 };
-
-$on_mod(Loaded) {
-    std::filesystem::create_directories(OUTPUT_DIR);
-    g_engine = std::make_unique<EchoClipEngine>();
-
-    BindManager::get()->registerBindable({
-        "echoclip-save"_spr, "Save Clip", "save video",
-        { Keybind::create(KEY_F6, Modifier::None) }, "EchoClip"
-    }); 
-    
-    new EventListener<InvokeBindFilter>(+[](InvokeBindEvent* event) {
-        if (event->isDown()) {
-            if (!g_engine || !g_engine->isRecording) {
-                showNotification("engine is off", true);
-                return ListenerResult::Propagate;
-            }
-            showNotification("clipping...");
-            std::string path = g_engine->generateClipFilename();
-            std::thread([path]() {
-                if (g_engine->exportClip(path)) showNotification("clipped");
-                else showNotification("save failed", true);
-            }).detach();
-        }
-        return ListenerResult::Propagate;
-    }, InvokeBindFilter(nullptr, "echoclip-save"_spr));
-}
