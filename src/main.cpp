@@ -19,6 +19,7 @@
 #include <queue>
 #include <windows.h>
 #include <d3d11.h>
+#include <d3d11_1.h>
 #include <dxgi1_2.h>
 #include <d3dcompiler.h>
 #include <fmod.hpp>
@@ -365,8 +366,9 @@ private:
         vsBlob->Release();
         if (FAILED(hr)) return false;
         
-        D3D11_SAMPLER_DESC samplerDesc = {};
-        samplerDesc.Filter = D3D11_FILTER_LINEAR;
+        D3D11_SAMPLER_DESC samplerDesc;
+        ZeroMemory(&samplerDesc, sizeof(samplerDesc));
+        samplerDesc.Filter = D3D11_FILTER_MIN_MAG_MIP_LINEAR;
         samplerDesc.AddressU = D3D11_TEXTURE_ADDRESS_CLAMP;
         samplerDesc.AddressV = D3D11_TEXTURE_ADDRESS_CLAMP;
         samplerDesc.AddressW = D3D11_TEXTURE_ADDRESS_CLAMP;
