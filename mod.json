@@ -5,7 +5,7 @@
     },
     "id": "axiom.echoclip",
     "name": "EchoClip",
-    "version": "1.0.0-beta.5",
+    "version": "1.0.0-beta.6",
     "developer": "Axiom",
     "description": "record and clip your gameplay press f6 to save last 5 attempts, message axiom_thebsdude on discord if you have any issues or suggestions",
     "links": {
