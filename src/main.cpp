@@ -3,9 +3,9 @@
 #include <Geode/Geode.hpp>
 #include <Geode/modify/PlayLayer.hpp>
 #include <Geode/modify/MenuLayer.hpp>
-#include <Geode/modify/CCDirector.hpp>
 #include <Geode/binding/PlayLayer.hpp>
-
+#include <eclipse.ffmpeg-api/include/recorder.hpp>
+#include <Geode/modify/CCKeyboardDispatcher.hpp>
 #include <vector>
 #include <thread>
 #include <mutex>
@@ -22,7 +22,6 @@
 #include <d3d11_1.h>
 #include <dxgi1_2.h>
 #include <d3dcompiler.h>
-#include <fmod.hpp>
 
 #pragma comment(lib, "d3d11.lib")
 #pragma comment(lib, "dxgi.lib")
@@ -31,16 +30,20 @@
 using namespace geode::prelude;
 
 static std::string getTempOutputPath() {
-    return (Mod::get()->getSaveDir() / "echoclip_temp.mp4").string();
+    auto path = Mod::get()->getSaveDir() / "echoclip_temp.mp4";
+    return path.string();
 }
 
 static std::string getOutputDir() {
-    return Mod::get()->getSaveDir().string();
+    auto path = Mod::get()->getSaveDir();
+    return path.string();
 }
 
-void showNotification(std::string message, bool error = false) {
+void showNotificationOnMainThread(std::string message, bool error = false) {
     auto icon = error ? NotificationIcon::Error : NotificationIcon::Success;
-    Notification::create(message, icon)->show();
+    Loader::get()->queueInMainThread([message, icon]() {
+        Notification::create(message, icon)->show();
+    });
 }
 
 template<typename T>
@@ -630,160 +633,6 @@ private:
     }
 };
 
-class FFmpegEncoder {
-private:
-    std::string outputPath;
-    int width, height, fps;
-    std::atomic<bool> isEncoding{false};
-    std::atomic<bool> shouldStop{false};
-    std::thread encodingThread;
-    LockFreeRingBuffer<VideoFrame> videoQueue{512};
-    
-    HANDLE hPipeWrite = NULL;
-    HANDLE hPipeRead = NULL;
-    PROCESS_INFORMATION pi = { 0 };
-    std::atomic<bool> writerActive{true};
-
-public:
-    FFmpegEncoder(const std::string& output, int w, int h, int f)
-        : outputPath(output), width(w), height(h), fps(f) {}
-    
-    ~FFmpegEncoder() { stop(); }
-    
-    static int runSilent(std::string cmd) {
-        STARTUPINFOA si = { sizeof(si) };
-        si.dwFlags = STARTF_USESHOWWINDOW;
-        si.wShowWindow = SW_HIDE;
-        PROCESS_INFORMATION pi;
-        
-        std::vector<char> buf(cmd.begin(), cmd.end()); 
-        buf.push_back(0);
-        
-        if (!CreateProcessA(NULL, buf.data(), NULL, NULL, FALSE, 
-            CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP, 
-            NULL, NULL, &si, &pi)) {
-            return -1;
-        }
-        
-        WaitForSingleObject(pi.hProcess, INFINITE);
-        DWORD exitCode = 0;
-        GetExitCodeProcess(pi.hProcess, &exitCode);
-        
-        CloseHandle(pi.hProcess);
-        CloseHandle(pi.hThread);
-        return (exitCode == 0) ? 0 : 1;
-    }
-    
-    bool initialize() {
-        SECURITY_ATTRIBUTES saAttr;
-        saAttr.nLength = sizeof(SECURITY_ATTRIBUTES);
-        saAttr.bInheritHandle = TRUE;
-        saAttr.lpSecurityDescriptor = NULL;
-
-        if (!CreatePipe(&hPipeRead, &hPipeWrite, &saAttr, 2 * 1024 * 1024)) {
-            return false;
-        }
-        SetHandleInformation(hPipeWrite, HANDLE_FLAG_INHERIT, 0);
-
-        std::ostringstream cmd;
-        cmd << "ffmpeg -y -f rawvideo -pix_fmt bgra -s " << width << "x" << height 
-            << " -r " << fps << " -thread_queue_size 8192 -i - "
-            << "-c:v libx264 -preset ultrafast -tune zerolatency -crf 23 -pix_fmt yuv420p "
-            << "-vsync cfr -r " << fps << " \"" << outputPath << "\"";
-
-        std::string cmdStr = cmd.str();
-        std::vector<char> buf(cmdStr.begin(), cmdStr.end());
-        buf.push_back(0);
-
-        STARTUPINFOA si = { sizeof(si) };
-        si.dwFlags = STARTF_USESTDHANDLES | STARTF_USESHOWWINDOW;
-        si.hStdInput = hPipeRead;
-        si.hStdOutput = GetStdHandle(STD_OUTPUT_HANDLE);
-        si.hStdError = GetStdHandle(STD_ERROR_HANDLE);
-        si.wShowWindow = SW_HIDE;
-
-        if (!CreateProcessA(NULL, buf.data(), NULL, NULL, TRUE, 
-            CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP, 
-            NULL, NULL, &si, &pi)) {
-            CloseHandle(hPipeRead);
-            CloseHandle(hPipeWrite);
-            hPipeRead = NULL;
-            hPipeWrite = NULL;
-            return false;
-        }
-
-        isEncoding = true;
-        shouldStop = false;
-        writerActive = true;
-        encodingThread = std::thread([this] { encodingLoop(); });
-        SetThreadPriority(encodingThread.native_handle(), THREAD_PRIORITY_ABOVE_NORMAL);
-        return true;
-    }
-    
-    void stop() {
-        if (!isEncoding) return;
-        shouldStop = true;
-        writerActive = false;
-        if (encodingThread.joinable()) encodingThread.join();
-        
-        if (hPipeWrite) {
-            CloseHandle(hPipeWrite);
-            hPipeWrite = NULL;
-        }
-        if (hPipeRead) {
-            CloseHandle(hPipeRead);
-            hPipeRead = NULL;
-        }
-        
-        if (pi.hProcess) {
-            WaitForSingleObject(pi.hProcess, 3000);
-            TerminateProcess(pi.hProcess, 0);
-            CloseHandle(pi.hProcess);
-            CloseHandle(pi.hThread);
-            pi.hProcess = NULL;
-        }
-        isEncoding = false;
-    }
-    
-    void flush() {
-        auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
-        while (!shouldStop && std::chrono::steady_clock::now() < deadline) {
-            if (videoQueue.getSize() == 0) break;
-            std::this_thread::sleep_for(std::chrono::milliseconds(2));
-        }
-        writerActive = false;
-        std::this_thread::sleep_for(std::chrono::milliseconds(500));
-    }
-    
-    bool submitVideoFrame(VideoFrame&& frame) {
-        if (!isEncoding || shouldStop || !writerActive) return false;
-        return videoQueue.push(std::move(frame));
-    }
-
-private:
-    void encodingLoop() {
-        while (!shouldStop || videoQueue.getSize() > 0) {
-            VideoFrame frame;
-            if (!videoQueue.pop(frame)) {
-                if (!writerActive) break;
-                std::this_thread::sleep_for(std::chrono::milliseconds(1));
-                continue;
-            }
-            
-            if (hPipeWrite) {
-                DWORD toWrite = static_cast<DWORD>(frame.data.size());
-                DWORD written = 0;
-                
-                if (!WriteFile(hPipeWrite, frame.data.data(), toWrite, &written, NULL)) {
-                    log::error("ffmpeg: write failed");
-                    writerActive = false;
-                    break;
-                }
-            }
-        }
-    }
-};
-
 struct AttemptMarker {
     int64_t frameNumber;
     std::string levelName;
@@ -796,9 +645,10 @@ public:
     std::atomic<bool> shouldStop{false};
     
     std::unique_ptr<ScreenCapture> videoCapture;
-    std::unique_ptr<FFmpegEncoder> encoder;
+    std::unique_ptr<ffmpeg::v2::Recorder> recorder;
     
     std::thread audioMixThread;
+    std::thread exportThread;
     
     int64_t videoFrameCounter = 0;
     int frameWidth = 854;
@@ -819,8 +669,9 @@ public:
         if (!isRecording) return;
         shouldStop = true;
         if (audioMixThread.joinable()) audioMixThread.join();
+        if (exportThread.joinable()) exportThread.join();
         if (videoCapture) videoCapture->stop();
-        if (encoder) encoder->stop();
+        if (recorder) recorder->stop();
         isRecording = false;
     }
     
@@ -833,8 +684,22 @@ public:
         videoCapture = std::make_unique<ScreenCapture>(targetFPS, frameWidth, frameHeight);
         if (!videoCapture->start()) return false;
         
-        encoder = std::make_unique<FFmpegEncoder>(getTempOutputPath(), frameWidth, frameHeight, targetFPS);
-        if (!encoder->initialize()) return false;
+        recorder = std::make_unique<ffmpeg::v2::Recorder>();
+        
+        ffmpeg::v2::RenderSettings settings;
+        settings.m_width = frameWidth;
+        settings.m_height = frameHeight;
+        settings.m_fps = targetFPS;
+        settings.m_outputFile = getTempOutputPath();
+        settings.m_codec = "h264";
+        settings.m_pixelFormat = static_cast<ffmpeg::v2::PixelFormat>(0);
+        settings.m_bitrate = 30000000;
+        
+        auto result = recorder->init(settings);
+        if (result.isErr()) {
+            log::error("echoclip: recorder init failed: {}", result.unwrapErr());
+            return false;
+        }
         
         isRecording = true;
         shouldStop = false;
@@ -843,7 +708,7 @@ public:
         audioMixThread = std::thread([this] { audioMixLoop(); });
         SetThreadPriority(audioMixThread.native_handle(), THREAD_PRIORITY_ABOVE_NORMAL);
         
-        Notification::create("echoclip: recording started", NotificationIcon::Success)->show();
+        showNotificationOnMainThread("echoclip: recording started");
         
         return true;
     }
@@ -873,43 +738,16 @@ public:
         }
     }
     
-    bool exportClip(const std::string& outputPath) {
-        std::lock_guard<std::mutex> lock(attemptMutex);
-        if (attemptMarkers.empty()) {
-            showNotification("no attempts", true);
-            return false;
+    void startExportClip(const std::string& outputPath) {
+        if (exportThread.joinable()) {
+            exportThread.join();
         }
         
-        if (encoder) encoder->flush();
-        std::this_thread::sleep_for(std::chrono::milliseconds(500));
-        
-        std::string tempPath = getTempOutputPath();
-        if (!std::filesystem::exists(tempPath)) {
-            log::error("temp file missing");
-            return false;
-        }
-        
-        const AttemptMarker& newest = attemptMarkers.front();
-        const AttemptMarker& oldest = attemptMarkers.back();
-        
-        double frameDuration = 1.0 / targetFPS;
-        double startTime = oldest.frameNumber * frameDuration;
-        double duration = (newest.frameNumber - oldest.frameNumber) * frameDuration;
-        
-        if (duration < 2.0) duration = 2.0;
-        if (startTime > 0.5) startTime -= 0.5;
-        duration += 0.5;
-        
-        std::ostringstream cmd;
-        cmd << "ffmpeg -y -ss " << std::fixed << std::setprecision(3) << startTime
-            << " -t " << duration
-            << " -i \"" << tempPath << "\""
-            << " -c:v copy -c:a copy -avoid_negative_ts make_zero "
-            << "-fflags +genpts \"" << outputPath << "\"";
-        
-        return FFmpegEncoder::runSilent(cmd.str()) == 0;
+        exportThread = std::thread([this, outputPath]() {
+            performExport(outputPath);
+        });
     }
-
+    
     std::string generateClipFilename() {
         std::lock_guard<std::mutex> lock(attemptMutex);
         if (attemptMarkers.empty()) return getOutputDir() + "/clip_error.mp4";
@@ -929,14 +767,99 @@ public:
         return filename.str();
     }
 
-private:
+    void performExport(const std::string& outputPath) {
+        std::lock_guard<std::mutex> lock(attemptMutex);
+        if (attemptMarkers.empty()) {
+            showNotificationOnMainThread("no attempts", true);
+            return;
+        }
+        
+        showNotificationOnMainThread("clipping...");
+        
+        auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+        while (std::chrono::steady_clock::now() < deadline) {
+            VideoFrame frame;
+            if (videoCapture && videoCapture->getFrame(frame)) {
+                if (recorder) {
+                    auto result = recorder->writeFrame(frame.data);
+                    if (result.isErr()) {
+                        log::error("failed to write frame: {}", result.unwrapErr());
+                    }
+                }
+            } else {
+                std::this_thread::sleep_for(std::chrono::milliseconds(50));
+            }
+        }
+        
+        if (recorder) {
+            recorder->stop();
+        }
+        
+        std::this_thread::sleep_for(std::chrono::milliseconds(500));
+        
+        std::string tempPath = getTempOutputPath();
+        if (!std::filesystem::exists(tempPath)) {
+            log::error("temp file missing");
+            showNotificationOnMainThread("temp file missing", true);
+            return;
+        }
+        
+        const AttemptMarker& newest = attemptMarkers.front();
+        const AttemptMarker& oldest = attemptMarkers.back();
+        
+        double frameDuration = 1.0 / targetFPS;
+        double startTime = oldest.frameNumber * frameDuration;
+        double duration = (newest.frameNumber - oldest.frameNumber) * frameDuration;
+        
+        if (duration < 2.0) duration = 2.0;
+        if (startTime > 0.5) startTime -= 0.5;
+        duration += 0.5;
+        
+        std::ostringstream cmd;
+        cmd << "ffmpeg -y -ss " << std::fixed << std::setprecision(3) << startTime
+            << " -t " << duration
+            << " -i \"" << tempPath << "\""
+            << " -c:v copy -avoid_negative_ts make_zero -fflags +genpts \"" << outputPath << "\"";
+        
+        STARTUPINFOA si = { sizeof(si) };
+        si.dwFlags = STARTF_USESHOWWINDOW;
+        si.wShowWindow = SW_HIDE;
+        PROCESS_INFORMATION pi;
+        
+        std::string cmdStr = cmd.str();
+        std::vector<char> buf(cmdStr.begin(), cmdStr.end());
+        buf.push_back(0);
+        
+        if (CreateProcessA(NULL, buf.data(), NULL, NULL, FALSE,
+            CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP,
+            NULL, NULL, &si, &pi)) {
+            
+            WaitForSingleObject(pi.hProcess, INFINITE);
+            DWORD exitCode = 0;
+            GetExitCodeProcess(pi.hProcess, &exitCode);
+            CloseHandle(pi.hProcess);
+            CloseHandle(pi.hThread);
+            
+            if (exitCode == 0) {
+                showNotificationOnMainThread("clipped");
+            } else {
+                showNotificationOnMainThread("save failed", true);
+            }
+        } else {
+            showNotificationOnMainThread("save failed", true);
+        }
+    }
+
     void audioMixLoop() {
         while (!shouldStop) {
             VideoFrame vframe;
             if (videoCapture && videoCapture->getFrame(vframe)) {
                 videoFrameCounter = vframe.frameNumber + 1;
-                if (encoder && !shouldStop) {
-                    encoder->submitVideoFrame(std::move(vframe));
+                if (recorder && !shouldStop) {
+                    auto result = recorder->writeFrame(vframe.data);
+                    if (result.isErr()) {
+                        log::error("write frame error: {}", result.unwrapErr());
+                    }
                 }
             } else {
                 std::this_thread::sleep_for(std::chrono::milliseconds(1));
@@ -970,28 +893,16 @@ class $modify(PlayLayerEchoClip, PlayLayer) {
     }
 };
 
-class $modify(KeyboardHandlerDirector, CCDirector) {
-    void update(float dt) {
-        CCDirector::update(dt);
-        
-        static bool lastF6 = false;
-        bool currentF6 = (GetAsyncKeyState(VK_F6) & 0x8000) != 0;
-        
-        if (currentF6 && !lastF6) {
+class $modify(KeyboardHandler, CCKeyboardDispatcher) {
+    bool dispatchKeyboardMSG(enumKeyCodes key, bool isKeyDown, bool isKeyRepeat, double timestamp) {
+        if (key == enumKeyCodes::KEY_F6 && isKeyDown && !isKeyRepeat) {
             if (!g_engine || !g_engine->isRecording) {
-                showNotification("engine off", true);
+                showNotificationOnMainThread("engine off", true);
             } else {
-                showNotification("clipping...");
                 std::string path = g_engine->generateClipFilename();
-                std::thread([path]() {
-                    if (g_engine && g_engine->exportClip(path)) {
-                        showNotification("clipped");
-                    } else {
-                        showNotification("save failed", true);
-                    }
-                }).detach();
+                g_engine->startExportClip(path);
             }
         }
-        lastF6 = currentF6;
+        return CCKeyboardDispatcher::dispatchKeyboardMSG(key, isKeyDown, isKeyRepeat, timestamp);
     }
 };
