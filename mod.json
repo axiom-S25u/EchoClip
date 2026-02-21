@@ -12,18 +12,16 @@
         "source": "https://github.com/axiom-S25u/EchoClip"
     },
     "tags": ["utility"],
-    "dependencies": [
-        {
-            "id": "eclipse.ffmpeg-api",
-            "version": ">=1.2.2",
-            "importance": "required"
-        },
-        {
-            "id": "geode.custom-keybinds",
-            "version": ">=1.9.0",
-            "importance": "required"
-        }
-    ],
+"dependencies": {
+    "eclipse.ffmpeg-api": {
+        "version": ">=1.2.2",
+        "importance": "required"
+    },
+    "geode.custom-keybinds": {
+        "version": ">=1.9.0",
+        "importance": "required"
+    }
+},
     "settings": {
         "enabled": {
             "name": "Enable Recording",
