@@ -5,7 +5,6 @@
 #include <Geode/modify/MenuLayer.hpp>
 #include <Geode/binding/PlayLayer.hpp>
 #include <eclipse.ffmpeg-api/include/recorder.hpp>
-#include <Geode/modify/CCKeyboardDispatcher.hpp>
 #include <vector>
 #include <thread>
 #include <mutex>
@@ -31,12 +30,12 @@ using namespace geode::prelude;
 
 static std::string getTempOutputPath() {
     auto path = Mod::get()->getSaveDir() / "echoclip_temp.mp4";
-    return path.string();
+    return geode::utils::file::pathToString(path);
 }
 
 static std::string getOutputDir() {
     auto path = Mod::get()->getSaveDir();
-    return path.string();
+    return geode::utils::file::pathToString(path);
 }
 
 void showNotificationOnMainThread(std::string message, bool error = false) {
@@ -675,42 +674,42 @@ public:
         isRecording = false;
     }
     
-    bool initialize() {
-        if (isRecording) return true;
-        if (!Mod::get()->getSettingValue<bool>("enabled")) return false;
+    void initialize() {
+        if (isRecording) return;
+        if (!Mod::get()->getSettingValue<bool>("enabled")) return;
 
-        std::filesystem::create_directories(getOutputDir());
-        
-        videoCapture = std::make_unique<ScreenCapture>(targetFPS, frameWidth, frameHeight);
-        if (!videoCapture->start()) return false;
-        
-        recorder = std::make_unique<ffmpeg::v2::Recorder>();
-        
-        ffmpeg::v2::RenderSettings settings;
-        settings.m_width = frameWidth;
-        settings.m_height = frameHeight;
-        settings.m_fps = targetFPS;
-        settings.m_outputFile = getTempOutputPath();
-        settings.m_codec = "h264";
-        settings.m_pixelFormat = static_cast<ffmpeg::v2::PixelFormat>(0);
-        settings.m_bitrate = 30000000;
-        
-        auto result = recorder->init(settings);
-        if (result.isErr()) {
-            log::error("echoclip: recorder init failed: {}", result.unwrapErr());
-            return false;
-        }
-        
-        isRecording = true;
-        shouldStop = false;
-        videoFrameCounter = 0;
-        
-        audioMixThread = std::thread([this] { audioMixLoop(); });
-        SetThreadPriority(audioMixThread.native_handle(), THREAD_PRIORITY_ABOVE_NORMAL);
-        
-        showNotificationOnMainThread("echoclip: recording started");
-        
-        return true;
+        std::thread([this]() {
+            std::filesystem::create_directories(getOutputDir());
+            
+            videoCapture = std::make_unique<ScreenCapture>(targetFPS, frameWidth, frameHeight);
+            if (!videoCapture->start()) return;
+            
+            recorder = std::make_unique<ffmpeg::v2::Recorder>();
+            
+            ffmpeg::v2::RenderSettings settings;
+            settings.m_width = frameWidth;
+            settings.m_height = frameHeight;
+            settings.m_fps = targetFPS;
+            settings.m_outputFile = getTempOutputPath();
+            settings.m_codec = "h264";
+            settings.m_pixelFormat = static_cast<ffmpeg::v2::PixelFormat>(0);
+            settings.m_bitrate = 30000000;
+            
+            auto result = recorder->init(settings);
+            if (result.isErr()) {
+                log::error("echoclip: recorder init failed: {}", result.unwrapErr());
+                return;
+            }
+            
+            isRecording = true;
+            shouldStop = false;
+            videoFrameCounter = 0;
+            
+            audioMixThread = std::thread([this] { audioMixLoop(); });
+            SetThreadPriority(audioMixThread.native_handle(), THREAD_PRIORITY_ABOVE_NORMAL);
+            
+            showNotificationOnMainThread("echoclip: recording started");
+        }).detach();
     }
 
     void recordAttempt() {
@@ -876,7 +875,9 @@ class $modify(AutoStartMenu, MenuLayer) {
         if (!g_engine) {
             g_engine = std::make_unique<EchoClipEngine>();
         }
-        if (g_engine && !g_engine->isRecording) g_engine->initialize();
+        if (g_engine && !g_engine->isRecording) {
+            g_engine->initialize();
+        }
         return true;
     }
 };
@@ -893,9 +894,9 @@ class $modify(PlayLayerEchoClip, PlayLayer) {
     }
 };
 
-class $modify(KeyboardHandler, CCKeyboardDispatcher) {
-    bool dispatchKeyboardMSG(enumKeyCodes key, bool isKeyDown, bool isKeyRepeat, double timestamp) {
-        if (key == enumKeyCodes::KEY_F6 && isKeyDown && !isKeyRepeat) {
+$execute {
+    new geode::EventListener<geode::EventFilter<geode::KeyboardInputEvent>>([](geode::KeyboardInputEvent* event) {
+        if (event->getKey() == enumKeyCodes::KEY_F6 && event->isDown()) {
             if (!g_engine || !g_engine->isRecording) {
                 showNotificationOnMainThread("engine off", true);
             } else {
@@ -903,6 +904,6 @@ class $modify(KeyboardHandler, CCKeyboardDispatcher) {
                 g_engine->startExportClip(path);
             }
         }
-        return CCKeyboardDispatcher::dispatchKeyboardMSG(key, isKeyDown, isKeyRepeat, timestamp);
-    }
-};
+        return geode::ListenerResult::Propagate;
+    });
+}
