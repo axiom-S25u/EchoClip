@@ -1,27 +1,23 @@
 {
-    "geode": "5.0.0-beta.3",
+    "geode": "5.1.0",
     "gd": {
         "win": "2.2081"
     },
     "id": "axiom.echoclip",
     "name": "EchoClip",
-    "version": "1.0.0-beta.7",
+    "version": "1.0.0-beta.8",
     "developer": "Axiom",
     "description": "record and clip your gameplay press f6 to save last 5 attempts, message axiom_thebsdude on discord if you have any issues or suggestions",
     "links": {
         "source": "https://github.com/axiom-S25u/EchoClip"
-    },
-    "tags": ["utility"],
-"dependencies": {
-    "eclipse.ffmpeg-api": {
-        "version": ">=1.2.2",
-        "importance": "required"
-    },
-    "geode.custom-keybinds": {
-        "version": ">=1.9.0",
-        "importance": "required"
-    }
-},
+  },
+    "tags": ["utility", "universal", "enhancement"],
+    "dependencies": [
+        {
+            "id": "eclipse.ffmpeg-api",
+            "version": ">=2.0.0"
+        }
+    ],
     "settings": {
         "enabled": {
             "name": "Enable Recording",
