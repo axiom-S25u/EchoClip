@@ -8,21 +8,54 @@ on:
 
 jobs:
   build:
-    name: Windows
-    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        config:
+        - name: Windows
+          os: windows-latest
+
+    name: ${{ matrix.config.name }}
+    runs-on: ${{ matrix.config.os }}
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Setup Android NDK
+        if: startsWith(matrix.config.name, 'Android')
+        uses: nttld/setup-ndk@v1
+        with:
+          ndk-version: r26b
+
       - name: Build Mod
         uses: geode-sdk/build-geode-mod@main
         with:
-          bindings: geode-sdk/bindings
+          bindings-ref: main
           combine: true
+          target: ${{ matrix.config.target }}
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: EchoClip-Windows
-          path: "*.geode"
+          name: ${{ matrix.config.name }}
+          path: build/*.geode
+
+  package:
+    name: Package builds
+    runs-on: ubuntu-latest
+    needs: ['build']
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Combine builds
+        uses: geode-sdk/build-geode-mod/combine@main
+        id: build
+
+      - name: Upload Final Mod
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ github.event.repository.name }}
+          # The secret sauce: using 'build-output' instead of just 'output'
+          path: ${{ steps.build.outputs.build-output }}
