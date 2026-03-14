@@ -1,584 +1,758 @@
-// written by someone who regrets everything
-// meow meow meow meow
 #include <Geode/Geode.hpp>
-#include <Geode/modify/CCScheduler.hpp>
 #include <Geode/modify/GJBaseGameLayer.hpp>
 #include <Geode/modify/PlayLayer.hpp>
 #include <Geode/binding/PlayLayer.hpp>
 #include <eclipse.ffmpeg-api/include/recorder.hpp>
-
-#include <fstream>
-
+#include <eclipse.ffmpeg-api/include/audio_mixer.hpp>
 #include <atomic>
 #include <chrono>
-#include <cstring>
+#include <condition_variable>
 #include <deque>
 #include <filesystem>
-#include <memory>
 #include <mutex>
 #include <thread>
 #include <vector>
+#include <cmath>
+#include <string>
+#include <queue>
+#include <memory>
 
 #ifdef GEODE_IS_WINDOWS
 #include <windows.h>
 #include <mmdeviceapi.h>
 #include <audioclient.h>
+#include <shellapi.h>
+#include <functiondiscoverykeys_devpkey.h>
 #pragma comment(lib, "ole32.lib")
+#pragma comment(lib, "oleaut32.lib")
 #endif
 
 using namespace geode::prelude;
 
-static std::filesystem::path g_saveDir() {
-    return Mod::get()->getSaveDir();
+static void notif(std::string msg, bool bad = false) {
+	auto ic = bad ? NotificationIcon::Error : NotificationIcon::Success;
+	Loader::get()->queueInMainThread([msg, ic] {
+		Notification::create(msg, ic)->show();
+	});
 }
 
-static void g_notify(std::string msg, bool err = false) {
-    auto icon = err ? NotificationIcon::Error : NotificationIcon::Success;
-    Loader::get()->queueInMainThread([msg, icon] {
-        Notification::create(msg, icon)->show();
-    });
+static std::string safename(const std::string& s) {
+	std::string o;
+	for (char c : s) {
+		if (std::isalnum((unsigned char)c) || c == '*' || c == '-') {
+			o += c;
+		} else {
+			o += '*';
+		}
+	}
+	return o.empty() ? "level" : o;
 }
 
-static std::string g_safeName(const std::string& raw) {
-    std::string out;
-    for (char c : raw) {
-        if (std::isalnum(c)) out += c;
-        else if (std::isspace(c)) out += '_';
-    }
-    return out.empty() ? "unknown" : out;
-}
+struct RawFrame {
+	std::vector<uint8_t> px;
+	int w = 0;
+	int h = 0;
+	int64_t idx = 0;
+};
 
-struct CapturedFrame {
-    std::vector<uint8_t> rgba;
-    int64_t frameIndex = 0;
+struct AttMark {
+	int64_t frameIdx = 0;
+	std::string lvlName;
+	int att = 0;
 };
 
 #ifdef GEODE_IS_WINDOWS
-class MicCapture {
+
+static std::string getDeviceFriendlyName(IMMDevice* dev) {
+	if (!dev) return "unknown";
+	IPropertyStore* props = nullptr;
+	if (FAILED(dev->OpenPropertyStore(STGM_READ, &props))) return "unknown";
+
+	PROPVARIANT pv;
+	PropVariantInit(&pv);
+	std::string result = "unknown";
+
+	if (SUCCEEDED(props->GetValue(PKEY_Device_FriendlyName, &pv)) && pv.vt == VT_LPWSTR && pv.pwszVal) {
+		int sz = WideCharToMultiByte(CP_UTF8, 0, pv.pwszVal, -1, nullptr, 0, nullptr, nullptr);
+		if (sz > 0) {
+			std::string buf(sz, 0);
+			WideCharToMultiByte(CP_UTF8, 0, pv.pwszVal, -1, buf.data(), sz, nullptr, nullptr);
+			buf.resize(strlen(buf.c_str()));
+			result = buf;
+		}
+	}
+
+	PropVariantClear(&pv);
+	props->Release();
+	return result;
+}
+
+class WasapiCapture {
 public:
-    std::vector<float> g_micSamples;
-    std::mutex g_micMtx;
-    std::atomic<bool> g_micRunning{false};
-    std::thread g_micThread;
+	enum class Mode { Mic, Loopback };
+	explicit WasapiCapture(Mode m) : m_mode(m) {}
 
-    IMMDeviceEnumerator* g_enumerator    = nullptr;
-    IMMDevice*           g_micDevice     = nullptr;
-    IAudioClient*        g_audioClient   = nullptr;
-    IAudioCaptureClient* g_captureClient = nullptr;
+	bool start(int clipLenSec) {
+		CoInitializeEx(nullptr, COINIT_MULTITHREADED);
 
-    bool start() {
-        CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+		if (FAILED(CoCreateInstance(__uuidof(MMDeviceEnumerator), nullptr,
+			CLSCTX_ALL, __uuidof(IMMDeviceEnumerator), (void**)&m_enumerator)))
+			return false;
 
-        HRESULT hr = CoCreateInstance(__uuidof(MMDeviceEnumerator), nullptr,
-            CLSCTX_ALL, __uuidof(IMMDeviceEnumerator), (void**)&g_enumerator);
-        if (FAILED(hr)) return false;
+		EDataFlow flow = (m_mode == Mode::Mic) ? eCapture : eRender;
+		if (FAILED(m_enumerator->GetDefaultAudioEndpoint(flow, eConsole, &m_device))) {
+			cleanup();
+			return false;
+		}
 
-        hr = g_enumerator->GetDefaultAudioEndpoint(eCapture, eConsole, &g_micDevice);
-        if (FAILED(hr)) { cleanup(); return false; }
+		m_deviceName = getDeviceFriendlyName(m_device);
 
-        hr = g_micDevice->Activate(__uuidof(IAudioClient), CLSCTX_ALL, nullptr, (void**)&g_audioClient);
-        if (FAILED(hr)) { cleanup(); return false; }
+		if (FAILED(m_device->Activate(__uuidof(IAudioClient), CLSCTX_ALL, nullptr, (void**)&m_client))) {
+			cleanup();
+			return false;
+		}
 
-        WAVEFORMATEX* wfx = nullptr;
-        hr = g_audioClient->GetMixFormat(&wfx);
-        if (FAILED(hr)) { cleanup(); return false; }
+		WAVEFORMATEX* wfx = nullptr;
+		if (FAILED(m_client->GetMixFormat(&wfx))) {
+			cleanup();
+			return false;
+		}
 
-        hr = g_audioClient->Initialize(AUDCLNT_SHAREMODE_SHARED, 0, 10000000, 0, wfx, nullptr);
-        CoTaskMemFree(wfx);
-        if (FAILED(hr)) { cleanup(); return false; }
+		m_channels = wfx->nChannels;
+		m_sampleRate = wfx->nSamplesPerSec;
+		m_maxSamples = (size_t)m_sampleRate * m_channels * clipLenSec;
 
-        hr = g_audioClient->GetService(__uuidof(IAudioCaptureClient), (void**)&g_captureClient);
-        if (FAILED(hr)) { cleanup(); return false; }
+		DWORD flags = (m_mode == Mode::Loopback) ? AUDCLNT_STREAMFLAGS_LOOPBACK : 0;
+		HRESULT hr = m_client->Initialize(AUDCLNT_SHAREMODE_SHARED, flags, 10000000, 0, wfx, nullptr);
+		CoTaskMemFree(wfx);
 
-        g_audioClient->Start();
-        g_micRunning = true;
+		if (FAILED(hr)) {
+			cleanup();
+			return false;
+		}
 
-        g_micThread = std::thread([this] {
-            while (g_micRunning) {
-                drainPackets();
-                std::this_thread::sleep_for(std::chrono::milliseconds(5));
-            }
-        });
+		if (FAILED(m_client->GetService(__uuidof(IAudioCaptureClient), (void**)&m_capture))) {
+			cleanup();
+			return false;
+		}
 
-        return true;
-    }
+		m_client->Start();
+		m_running = true;
+		m_thread = std::thread([this] {
+			CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+			while (m_running) {
+				pull();
+				std::this_thread::sleep_for(std::chrono::milliseconds(5));
+			}
+			CoUninitialize();
+		});
 
-    void stop() {
-        g_micRunning = false;
-        if (g_micThread.joinable()) g_micThread.join();
-        if (g_audioClient) g_audioClient->Stop();
-        cleanup();
-    }
+		return true;
+	}
 
-    std::vector<float> takeSamples() {
-        std::lock_guard<std::mutex> lk(g_micMtx);
-        return std::exchange(g_micSamples, {});
-    }
+	void stop() {
+		m_running = false;
+		if (m_thread.joinable()) m_thread.join();
+		if (m_client) m_client->Stop();
+		cleanup();
+	}
+
+	std::vector<float> takeAll() {
+		std::lock_guard<std::mutex> lk(m_mtx);
+		return std::vector<float>(m_buf.begin(), m_buf.end());
+	}
+
+	std::string getDeviceName() const { return m_deviceName; }
+	int getChannels() const { return m_channels; }
+	int getSampleRate() const { return m_sampleRate; }
 
 private:
-    void drainPackets() {
-        if (!g_captureClient) return;
-        UINT32 packetSize = 0;
-        while (SUCCEEDED(g_captureClient->GetNextPacketSize(&packetSize)) && packetSize > 0) {
-            BYTE* data = nullptr;
-            UINT32 frames = 0;
-            DWORD flags = 0;
-            if (FAILED(g_captureClient->GetBuffer(&data, &frames, &flags, nullptr, nullptr))) break;
+	void pull() {
+		if (!m_capture) return;
 
-            if (!(flags & AUDCLNT_BUFFERFLAGS_SILENT) && data && frames > 0) {
-                float* fdata = reinterpret_cast<float*>(data);
-                std::lock_guard<std::mutex> lk(g_micMtx);
-                g_micSamples.insert(g_micSamples.end(), fdata, fdata + (frames * 2));
-            }
+		UINT32 packetSize = 0;
+		while (SUCCEEDED(m_capture->GetNextPacketSize(&packetSize)) && packetSize > 0) {
+			BYTE* data = nullptr;
+			UINT32 frames = 0;
+			DWORD flags = 0;
 
-            g_captureClient->ReleaseBuffer(frames);
-        }
-    }
+			if (FAILED(m_capture->GetBuffer(&data, &frames, &flags, nullptr, nullptr))) break;
 
-    void cleanup() {
-        if (g_captureClient) { g_captureClient->Release(); g_captureClient = nullptr; }
-        if (g_audioClient)   { g_audioClient->Release();   g_audioClient   = nullptr; }
-        if (g_micDevice)     { g_micDevice->Release();     g_micDevice     = nullptr; }
-        if (g_enumerator)    { g_enumerator->Release();    g_enumerator    = nullptr; }
-    }
+			if (!(flags & AUDCLNT_BUFFERFLAGS_SILENT) && data && frames > 0) {
+				auto fd = reinterpret_cast<float*>(data);
+				int ch = m_channels > 0 ? m_channels : 2;
+
+				std::lock_guard<std::mutex> lk(m_mtx);
+				for (UINT32 i = 0; i < frames; i++) {
+					float left = fd[i * ch];
+					float right = (ch > 1) ? fd[i * ch + 1] : left;
+					m_buf.push_back(left);
+					m_buf.push_back(right);
+				}
+
+				while (m_buf.size() > m_maxSamples) {
+					m_buf.pop_front();
+				}
+			}
+
+			m_capture->ReleaseBuffer(frames);
+		}
+	}
+
+	void cleanup() {
+		if (m_capture) {
+			m_capture->Release();
+			m_capture = nullptr;
+		}
+		if (m_client) {
+			m_client->Release();
+			m_client = nullptr;
+		}
+		if (m_device) {
+			m_device->Release();
+			m_device = nullptr;
+		}
+		if (m_enumerator) {
+			m_enumerator->Release();
+			m_enumerator = nullptr;
+		}
+	}
+
+	Mode m_mode;
+	std::atomic<bool> m_running{false};
+	std::thread m_thread;
+	std::mutex m_mtx;
+	std::deque<float> m_buf;
+	size_t m_maxSamples = 48000 * 2 * 30;
+	std::string m_deviceName = "unknown";
+	int m_channels = 2;
+	int m_sampleRate = 48000;
+	IMMDeviceEnumerator* m_enumerator = nullptr;
+	IMMDevice* m_device = nullptr;
+	IAudioClient* m_client = nullptr;
+	IAudioCaptureClient* m_capture = nullptr;
 };
 
-class GDAudioCapture {
-public:
-    std::vector<float> g_samples;
-    std::mutex g_mtx;
-    std::atomic<bool> g_running{false};
-    std::thread g_thread;
-
-    IMMDeviceEnumerator* g_enumerator  = nullptr;
-    IMMDevice*           g_device      = nullptr;
-    IAudioClient*        g_audioClient = nullptr;
-    IAudioCaptureClient* g_capture     = nullptr;
-
-    bool start() {
-        CoInitializeEx(nullptr, COINIT_MULTITHREADED);
-
-        HRESULT hr = CoCreateInstance(__uuidof(MMDeviceEnumerator), nullptr,
-            CLSCTX_ALL, __uuidof(IMMDeviceEnumerator), (void**)&g_enumerator);
-        if (FAILED(hr)) return false;
-
-        hr = g_enumerator->GetDefaultAudioEndpoint(eRender, eConsole, &g_device);
-        if (FAILED(hr)) { cleanup(); return false; }
-
-        hr = g_device->Activate(__uuidof(IAudioClient), CLSCTX_ALL, nullptr, (void**)&g_audioClient);
-        if (FAILED(hr)) { cleanup(); return false; }
-
-        WAVEFORMATEX* wfx = nullptr;
-        hr = g_audioClient->GetMixFormat(&wfx);
-        if (FAILED(hr)) { cleanup(); return false; }
-
-        hr = g_audioClient->Initialize(AUDCLNT_SHAREMODE_SHARED,
-            AUDCLNT_STREAMFLAGS_LOOPBACK, 10000000, 0, wfx, nullptr);
-        CoTaskMemFree(wfx);
-        if (FAILED(hr)) { cleanup(); return false; }
-
-        hr = g_audioClient->GetService(__uuidof(IAudioCaptureClient), (void**)&g_capture);
-        if (FAILED(hr)) { cleanup(); return false; }
-
-        g_audioClient->Start();
-        g_running = true;
-
-        g_thread = std::thread([this] {
-            while (g_running) {
-                drainPackets();
-                std::this_thread::sleep_for(std::chrono::milliseconds(5));
-            }
-        });
-
-        return true;
-    }
-
-    void stop() {
-        g_running = false;
-        if (g_thread.joinable()) g_thread.join();
-        if (g_audioClient) g_audioClient->Stop();
-        cleanup();
-    }
-
-    std::vector<float> takeSamples() {
-        std::lock_guard<std::mutex> lk(g_mtx);
-        return std::exchange(g_samples, {});
-    }
-
-private:
-    void drainPackets() {
-        if (!g_capture) return;
-        UINT32 packetSize = 0;
-        while (SUCCEEDED(g_capture->GetNextPacketSize(&packetSize)) && packetSize > 0) {
-            BYTE* data = nullptr;
-            UINT32 frames = 0;
-            DWORD flags = 0;
-            if (FAILED(g_capture->GetBuffer(&data, &frames, &flags, nullptr, nullptr))) break;
-
-            if (!(flags & AUDCLNT_BUFFERFLAGS_SILENT) && data && frames > 0) {
-                float* fdata = reinterpret_cast<float*>(data);
-                std::lock_guard<std::mutex> lk(g_mtx);
-                g_samples.insert(g_samples.end(), fdata, fdata + (frames * 2));
-            }
-
-            g_capture->ReleaseBuffer(frames);
-        }
-    }
-
-    void cleanup() {
-        if (g_capture)     { g_capture->Release();     g_capture     = nullptr; }
-        if (g_audioClient) { g_audioClient->Release(); g_audioClient = nullptr; }
-        if (g_device)      { g_device->Release();      g_device      = nullptr; }
-        if (g_enumerator)  { g_enumerator->Release();  g_enumerator  = nullptr; }
-    }
-};
 #else
-class MicCapture {
+
+class WasapiCapture {
 public:
-    bool start() { return false; }
-    void stop() {}
-    std::vector<float> takeSamples() { return {}; }
+	enum class Mode { Mic, Loopback };
+	explicit WasapiCapture(Mode) {}
+	bool start(int) { return false; }
+	void stop() {}
+	std::vector<float> takeAll() { return {}; }
+	std::string getDeviceName() const { return "unsupported"; }
+	int getChannels() const { return 2; }
+	int getSampleRate() const { return 48000; }
 };
 
-class GDAudioCapture {
-public:
-    bool start() { return false; }
-    void stop() {}
-    std::vector<float> takeSamples() { return {}; }
-};
 #endif
 
-struct AttemptMark {
-    int64_t frameIndex = 0;
-    std::string levelName;
-    int attempt = 0;
-};
-
-class EchoClipEngine {
+class AsyncFrameGrabber {
 public:
-    int g_fps        = 60;
-    int g_width      = 1920;
-    int g_height     = 1080;
-    int g_windowSecs = 30;
+	static constexpr int NUM_PBOS = 4;
 
-    std::atomic<bool> g_active{false};
-    int64_t           g_frameIdx = 0;
+	void init(int w, int h) {
+		if (m_initialized && m_width == w && m_height == h) return;
 
-    std::mutex                g_frameMtx;
-    std::deque<CapturedFrame> g_frameRing;
-    size_t                    g_maxFrames = 0;
+		cleanup();
 
-    std::mutex              g_markMtx;
-    std::deque<AttemptMark> g_marks;
+		m_width = w;
+		m_height = h;
+		m_frameSize = (size_t)w * h * 4;
 
-    MicCapture     g_mic;
-    GDAudioCapture g_gdAudio;
+		glGenBuffers(NUM_PBOS, m_pbos);
+		for (int i = 0; i < NUM_PBOS; i++) {
+			glBindBuffer(GL_PIXEL_PACK_BUFFER, m_pbos[i]);
+			glBufferData(GL_PIXEL_PACK_BUFFER, m_frameSize, nullptr, GL_STREAM_READ);
+		}
+		glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
 
-    std::mutex         g_audioMtx;
-    std::vector<float> g_micAccum;
-    std::vector<float> g_gdAccum;
+		m_pboIndex = 0;
+		m_framesSubmitted = 0;
+		m_initialized = true;
+	}
 
-    std::mutex g_exportMtx;
-    bool       g_exportBusy = false;
+	void cleanup() {
+		if (!m_initialized) return;
+		glDeleteBuffers(NUM_PBOS, m_pbos);
+		m_initialized = false;
+	}
 
-    void init() {
-        if (g_active) return;
+	void beginCapture(int x, int y, int w, int h) {
+		if (!m_initialized || w != m_width || h != m_height) {
+			init(w, h);
+		}
 
-        g_maxFrames = static_cast<size_t>(g_fps * g_windowSecs);
-        g_frameIdx  = 0;
-        g_active    = true;
+		glBindBuffer(GL_PIXEL_PACK_BUFFER, m_pbos[m_pboIndex]);
+		glReadPixels(x, y, w, h, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+		glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
 
-        g_mic.start();
-        g_gdAudio.start();
+		m_pboIndex = (m_pboIndex + 1) % NUM_PBOS;
+		m_framesSubmitted++;
+	}
 
-        g_notify("echoclip: on");
-    }
+	bool getFrame(std::vector<uint8_t>& outBuffer) {
+		if (!m_initialized || m_framesSubmitted < NUM_PBOS) return false;
 
-    void shutdown() {
-        if (!g_active) return;
-        g_active = false;
-        g_mic.stop();
-        g_gdAudio.stop();
-    }
+		int readIndex = m_pboIndex; 
 
-    void pushFrame(const std::vector<uint8_t>& rgba) {
-        {
-            auto micSamp = g_mic.takeSamples();
-            auto gdSamp  = g_gdAudio.takeSamples();
-            std::lock_guard<std::mutex> lk(g_audioMtx);
-            g_micAccum.insert(g_micAccum.end(), micSamp.begin(), micSamp.end());
-            g_gdAccum.insert(g_gdAccum.end(),   gdSamp.begin(),  gdSamp.end());
-        }
+		glBindBuffer(GL_PIXEL_PACK_BUFFER, m_pbos[readIndex]);
 
-        CapturedFrame f;
-        f.rgba       = rgba;
-        f.frameIndex = g_frameIdx++;
+		void* ptr = glMapBuffer(GL_PIXEL_PACK_BUFFER, GL_READ_ONLY);
+		if (ptr) {
+			memcpy(outBuffer.data(), ptr, m_frameSize);
+			glUnmapBuffer(GL_PIXEL_PACK_BUFFER);
+		}
 
-        std::lock_guard<std::mutex> lk(g_frameMtx);
-        g_frameRing.push_back(std::move(f));
-        while (g_frameRing.size() > g_maxFrames)
-            g_frameRing.pop_front();
-    }
+		glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
 
-    void markAttempt() {
-        if (!g_active) return;
-        AttemptMark m;
-        m.frameIndex = g_frameIdx;
-        if (auto pl = PlayLayer::get()) {
-            if (auto lvl = pl->m_level) m.levelName = lvl->m_levelName;
-            m.attempt = pl->m_attempts;
-        }
-        std::lock_guard<std::mutex> lk(g_markMtx);
-        g_marks.push_front(m);
-        while (g_marks.size() > 256) g_marks.pop_back();
-    }
-
-    void triggerClip() {
-        if (!g_active) { g_notify("echoclip not running", true); return; }
-
-        std::lock_guard<std::mutex> expLk(g_exportMtx);
-        if (g_exportBusy) { g_notify("clip in progress...", true); return; }
-        g_exportBusy = true;
-
-        std::deque<CapturedFrame> frames;
-        std::vector<float>        micAudio;
-        std::vector<float>        gdAudio;
-        AttemptMark               mark;
-
-        {
-            std::lock_guard<std::mutex> lk(g_frameMtx);
-            frames = g_frameRing;
-        }
-        {
-            std::lock_guard<std::mutex> lk(g_audioMtx);
-            micAudio = g_micAccum;
-            gdAudio  = g_gdAccum;
-        }
-        {
-            std::lock_guard<std::mutex> lk(g_markMtx);
-            if (!g_marks.empty()) mark = g_marks.front();
-        }
-
-        if (frames.empty()) {
-            g_notify("no frames captured yet", true);
-            g_exportBusy = false;
-            return;
-        }
-
-        std::thread([this,
-                     frames   = std::move(frames),
-                     micAudio = std::move(micAudio),
-                     gdAudio  = std::move(gdAudio),
-                     mark]() mutable {
-            exportClip(frames, micAudio, gdAudio, mark);
-            std::lock_guard<std::mutex> lk(g_exportMtx);
-            g_exportBusy = false;
-        }).detach();
-    }
+		return ptr != nullptr;
+	}
 
 private:
-    void exportClip(
-        const std::deque<CapturedFrame>& frames,
-        const std::vector<float>& micAudio,
-        const std::vector<float>& gdAudio,
-        const AttemptMark& mark)
-    {
-        g_notify("clipping...");
-
-        auto dir = g_saveDir() / "clips";
-        std::error_code ec;
-        std::filesystem::create_directories(dir, ec);
-
-        std::string stem = g_safeName(mark.levelName) + "_att" + std::to_string(mark.attempt);
-
-        auto videoPath = dir / (stem + "_video.mp4");
-        auto mixedPath = dir / (stem + ".mp4");
-
-        {
-            ffmpeg::v2::Recorder rec;
-
-            ffmpeg::v2::RenderSettings rs;
-            rs.m_width          = static_cast<uint32_t>(g_width);
-            rs.m_height         = static_cast<uint32_t>(g_height);
-            rs.m_fps            = static_cast<uint16_t>(g_fps);
-            rs.m_codec          = "libx264";
-            rs.m_bitrate        = 30000000;
-            rs.m_outputFile     = videoPath;
-            rs.m_pixelFormat    = ffmpeg::v2::PixelFormat::RGBA;
-            rs.m_doVerticalFlip = false;
-
-            auto initRes = rec.init(rs);
-            if (initRes.isErr()) {
-                g_notify("recorder init failed: " + initRes.unwrapErr(), true);
-                return;
-            }
-
-            for (const auto& f : frames) {
-                auto writeRes = rec.writeFrame(f.rgba);
-                if (writeRes.isErr())
-                    log::warn("echoclip: frame write error: {}", writeRes.unwrapErr());
-            }
-
-            rec.stop();
-        }
-
-        if (!std::filesystem::exists(videoPath)) {
-            g_notify("video encode failed", true);
-            return;
-        }
-
-        size_t audioLen = std::max(micAudio.size(), gdAudio.size());
-
-        if (audioLen == 0) {
-            std::filesystem::rename(videoPath, mixedPath, ec);
-            g_notify("clipped (no audio): " + mixedPath.filename().string());
-            return;
-        }
-
-        std::vector<float> mixed(audioLen, 0.f);
-        for (size_t i = 0; i < micAudio.size(); ++i)
-            mixed[i] += micAudio[i];
-        for (size_t i = 0; i < gdAudio.size(); ++i)
-            mixed[i] += gdAudio[i];
-        for (auto& s : mixed)
-            s = std::clamp(s, -1.f, 1.f);
-
-        auto wavPath = dir / (stem + "_audio.wav");
-
-        {
-            std::ofstream wav(wavPath, std::ios::binary);
-            uint32_t sampleRate   = 48000;
-            uint16_t channels     = 2;
-            uint16_t bitsPerSample = 32;
-            uint32_t byteRate     = sampleRate * channels * (bitsPerSample / 8);
-            uint16_t blockAlign   = channels * (bitsPerSample / 8);
-            uint32_t dataSize     = static_cast<uint32_t>(mixed.size() * sizeof(float));
-            uint32_t chunkSize    = 36 + dataSize;
-
-            wav.write("RIFF", 4);
-            wav.write(reinterpret_cast<const char*>(&chunkSize), 4);
-            wav.write("WAVE", 4);
-            wav.write("fmt ", 4);
-            uint32_t fmtSize = 18;
-            uint16_t audioFmt = 3;
-            wav.write(reinterpret_cast<const char*>(&fmtSize), 4);
-            wav.write(reinterpret_cast<const char*>(&audioFmt), 2);
-            wav.write(reinterpret_cast<const char*>(&channels), 2);
-            wav.write(reinterpret_cast<const char*>(&sampleRate), 4);
-            wav.write(reinterpret_cast<const char*>(&byteRate), 4);
-            wav.write(reinterpret_cast<const char*>(&blockAlign), 2);
-            wav.write(reinterpret_cast<const char*>(&bitsPerSample), 2);
-            uint16_t extSize = 0;
-            wav.write(reinterpret_cast<const char*>(&extSize), 2);
-            wav.write("data", 4);
-            wav.write(reinterpret_cast<const char*>(&dataSize), 4);
-            wav.write(reinterpret_cast<const char*>(mixed.data()), dataSize);
-        }
-
-        std::string cmd = "ffmpeg -y -i \"" + videoPath.string() + "\" -i \"" + wavPath.string()
-            + "\" -c:v copy -c:a aac -shortest \"" + mixedPath.string() + "\"";
-
-        std::vector<char> buf(cmd.begin(), cmd.end());
-        buf.push_back(0);
-
-        STARTUPINFOA si = { sizeof(si) };
-        si.dwFlags = STARTF_USESHOWWINDOW;
-        si.wShowWindow = SW_HIDE;
-        PROCESS_INFORMATION pi;
-
-        bool ok = CreateProcessA(nullptr, buf.data(), nullptr, nullptr, FALSE,
-            CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi);
-
-        if (ok) {
-            WaitForSingleObject(pi.hProcess, INFINITE);
-            DWORD code = 0;
-            GetExitCodeProcess(pi.hProcess, &code);
-            CloseHandle(pi.hProcess);
-            CloseHandle(pi.hThread);
-            if (code != 0) ok = false;
-        }
-
-        std::filesystem::remove(videoPath, ec);
-        std::filesystem::remove(wavPath, ec);
-
-        if (ok)
-            g_notify("clipped: " + mixedPath.filename().string());
-        else
-            g_notify("audio mix failed", true);
-    }
+	GLuint m_pbos[NUM_PBOS] = {0};
+	int m_pboIndex = 0;
+	int m_framesSubmitted = 0;
+	int m_width = 0;
+	int m_height = 0;
+	size_t m_frameSize = 0;
+	bool m_initialized = false;
 };
 
-static EchoClipEngine g_engine;
+class Engine {
+public:
+	std::atomic<bool> active{false};
+	std::atomic<int64_t> frameIdx{0};
 
-class $modify(EchoClipBGL, GJBaseGameLayer) {
-    struct Fields {
-        bool g_isyapping = false;
-    };
+	WasapiCapture mic{WasapiCapture::Mode::Mic};
+	WasapiCapture gd{WasapiCapture::Mode::Loopback};
 
-    void update(float dt) override {
-        GJBaseGameLayer::update(dt);
+	std::mutex exportMtx;
+	std::atomic<bool> exporting{false};
 
-        if (!g_engine.g_active) return;
-        if (m_gameState.m_currentProgress <= 0) return;
+	int bestPct = 0;
+	std::mutex bestMtx;
 
-        m_fields->g_isyapping = true;
-        captureCurrentFrame();
-        m_fields->g_isyapping = false;
-    }
+	int targetFps = 30;
+	int clipLenSec = 30;
 
-    void visit() override {
-        if (!m_fields->g_isyapping) {
-            GJBaseGameLayer::visit();
-            return;
-        }
-        GJBaseGameLayer::visit();
-    }
+	std::mutex markMtx;
+	std::deque<AttMark> marks;
 
-    void captureCurrentFrame() {
-        auto winSize = cocos2d::CCDirector::sharedDirector()->getWinSizeInPixels();
+	AsyncFrameGrabber frameGrabber;
 
-        int w = static_cast<int>(winSize.width);
-        int h = static_cast<int>(winSize.height);
-        size_t dataSize = static_cast<size_t>(w * h * 4);
+	std::mutex ringMtx;
+	std::vector<RawFrame> ring;
+	size_t maxFrames = 0;
+	size_t ringHead = 0;
+	size_t ringCount = 0;
 
-        std::vector<uint8_t> rgba(dataSize);
-        glReadPixels(0, 0, w, h, GL_RGBA, GL_UNSIGNED_BYTE, rgba.data());
+	std::string lastCodec = "";
 
-        std::vector<uint8_t> flipped(dataSize);
-        size_t rowBytes = static_cast<size_t>(w * 4);
-        for (int y = 0; y < h; ++y)
-            std::memcpy(flipped.data() + y * rowBytes,
-                        rgba.data() + (h - 1 - y) * rowBytes,
-                        rowBytes);
+	int frameSkip = 0;
+	int currentSkip = 0;
 
-        g_engine.pushFrame(flipped);
-    }
+	void init() {
+		if (active) return;
+
+		targetFps = (int)Mod::get()->getSettingValue<int64_t>("target-fps");
+		clipLenSec = (int)Mod::get()->getSettingValue<int64_t>("clip-length");
+		maxFrames = (size_t)(targetFps * clipLenSec);
+		frameIdx = 0;
+
+		if (targetFps >= 60) {
+			frameSkip = 1;
+		} else {
+			frameSkip = 0;
+		}
+
+		{
+			std::lock_guard<std::mutex> lk(ringMtx);
+			ring.resize(maxFrames);
+			ringHead = 0;
+			ringCount = 0;
+		}
+
+		active = true;
+
+		bool micOk = mic.start(clipLenSec);
+		bool gdOk = gd.start(clipLenSec);
+
+		std::string micName = micOk ? mic.getDeviceName() : "no mic";
+		notif("echoclip ready | mic: " + micName);
+	}
+
+	void shutdown() {
+		if (!active) return;
+		active = false;
+		mic.stop();
+		gd.stop();
+		frameGrabber.cleanup();
+	}
+
+	void markAtt() {
+		if (!active) return;
+
+		AttMark m;
+		m.frameIdx = frameIdx.load();
+
+		if (auto pl = PlayLayer::get()) {
+			if (auto lvl = pl->m_level) {
+				m.lvlName = lvl->m_levelName;
+			}
+			m.att = pl->m_attempts;
+		}
+
+		std::lock_guard<std::mutex> lk(markMtx);
+		marks.push_front(m);
+
+		while (marks.size() > 256) {
+			marks.pop_back();
+		}
+	}
+
+	void checkBest(int pct) {
+		if (!active || !Mod::get()->getSettingValue<bool>("clip-on-new-best")) return;
+
+		bool nb = false;
+		{
+			std::lock_guard<std::mutex> lk(bestMtx);
+			if (pct > bestPct) {
+				bestPct = pct;
+				nb = true;
+			}
+		}
+
+		if (nb && pct > 0) {
+			clip();
+		}
+	}
+
+	void clip() {
+		if (!active) {
+			notif("echoclip not active", true);
+			return;
+		}
+		if (exporting.exchange(true)) {
+			notif("already exporting", true);
+			return;
+		}
+
+		AttMark mark;
+		int64_t attStart = 0;
+
+		{
+			std::lock_guard<std::mutex> lk(markMtx);
+			if (!marks.empty()) {
+				mark = marks.front();
+				size_t lookback = std::min(marks.size(), size_t(5));
+				attStart = marks[lookback - 1].frameIdx;
+			}
+		}
+
+		std::deque<RawFrame> frames;
+		{
+			std::lock_guard<std::mutex> lk(ringMtx);
+			size_t startIdx = (ringHead + maxFrames - ringCount) % maxFrames;
+			for(size_t i = 0; i < ringCount; i++) {
+				size_t idx = (startIdx + i) % maxFrames;
+				if (ring[idx].idx >= attStart) {
+					frames.push_back(std::move(ring[idx]));
+				}
+			}
+			ringCount = 0; 
+			ringHead = 0;
+		}
+
+		std::vector<float> ma = mic.takeAll();
+		std::vector<float> ga = gd.takeAll();
+
+		if (frames.empty()) {
+			notif("no frames to clip", true);
+			exporting = false;
+			return;
+		}
+
+		std::thread([this, frames = std::move(frames), ma = std::move(ma), ga = std::move(ga), mark]() mutable {
+			doExport(std::move(frames), std::move(ma), std::move(ga), mark);
+			exporting = false;
+		}).detach();
+	}
+
+private:
+	std::string pickVideoCodec() {
+		std::vector<std::string> codecs = {"h264_nvenc", "hevc_nvenc", "h264_amf", "h264_qsv", "libx264"};
+
+		for (auto& c : codecs) {
+			ffmpeg::Recorder test;
+			ffmpeg::RenderSettings rs;
+			rs.m_width = 8;
+			rs.m_height = 8;
+			rs.m_fps = 1;
+			rs.m_codec = c;
+			rs.m_bitrate = 100000;
+			rs.m_outputFile = Mod::get()->getSaveDir() / "test.mp4";
+			rs.m_pixelFormat = ffmpeg::PixelFormat::RGB0;
+
+			auto r = test.init(rs);
+			if (r.isOk()) {
+				test.stop();
+				std::error_code ec;
+				std::filesystem::remove(rs.m_outputFile, ec);
+				lastCodec = c;
+				return c;
+			}
+		}
+
+		lastCodec = "libx264";
+		return "libx264";
+	}
+
+	void doExport(std::deque<RawFrame> frames, std::vector<float> ma, std::vector<float> ga, AttMark mark) {
+		notif("creating clip...");
+
+		auto dir = Mod::get()->getSaveDir() / "clips";
+		std::error_code ec;
+		std::filesystem::create_directories(dir, ec);
+
+		std::string stem = safename(mark.lvlName) + "_att" + std::to_string(mark.att);
+		auto vidpath = dir / (stem + "_tmp.mp4");
+		auto outpath = dir / (stem + ".mkv");
+
+		if (frames.empty()) {
+			notif("frame error", true);
+			return;
+		}
+
+		int fw = frames.front().w & ~1;
+		int fh = frames.front().h & ~1;
+
+		if (fw <= 0 || fh <= 0) {
+			notif("invalid frame size", true);
+			return;
+		}
+
+		int fps = (int)Mod::get()->getSettingValue<int64_t>("target-fps");
+		int crf = (int)Mod::get()->getSettingValue<int64_t>("crf-quality");
+
+		std::string codec = pickVideoCodec();
+		int bitrate = (int)(50000000.0 * std::pow(0.75, std::max(0, crf - 18)));
+
+		{
+			ffmpeg::Recorder rec;
+			ffmpeg::RenderSettings rs;
+			rs.m_width = (uint32_t)fw;
+			rs.m_height = (uint32_t)fh;
+			rs.m_fps = (uint16_t)fps;
+			rs.m_codec = codec;
+			rs.m_bitrate = (uint32_t)bitrate;
+			rs.m_outputFile = vidpath;
+			rs.m_pixelFormat = ffmpeg::PixelFormat::RGB0;
+
+			auto r = rec.init(rs);
+			if (r.isErr()) {
+				notif("record init fail", true);
+				return;
+			}
+
+			int frameCount = 0;
+			for (auto& f : frames) {
+				if (f.px.empty() || f.w != fw || f.h != fh) continue;
+
+				auto wr = rec.writeFrame(f.px);
+				frameCount++;
+			}
+
+			rec.stop();
+		}
+
+		frames.clear();
+
+		if (!std::filesystem::exists(vidpath, ec)) {
+			notif("encode error", true);
+			return;
+		}
+
+		auto vidSize = std::filesystem::file_size(vidpath, ec);
+		if (vidSize < 512) {
+			notif("encode failed", true);
+			std::filesystem::remove(vidpath, ec);
+			return;
+		}
+
+		size_t alen = std::max(ma.size(), ga.size());
+
+		if (alen == 0) {
+			std::filesystem::rename(vidpath, outpath, ec);
+			notif("clip saved (no audio)");
+			return;
+		}
+
+		float mvol = (float)Mod::get()->getSettingValue<double>("mic-audio-volume") / 100.f;
+		float gvol = (float)Mod::get()->getSettingValue<double>("game-audio-volume") / 100.f;
+
+		std::vector<float> mixed(alen, 0.f);
+
+		for (size_t i = 0; i < ma.size(); i++) {
+			mixed[i] += ma[i] * mvol;
+		}
+		for (size_t i = 0; i < ga.size(); i++) {
+			mixed[i] += ga[i] * gvol;
+		}
+
+		for (auto& s : mixed) {
+			s = std::clamp(s, -1.f, 1.f);
+		}
+
+		ma.clear();
+		ga.clear();
+
+		auto mr = ffmpeg::AudioMixer::mixVideoRaw(vidpath.string(), mixed, outpath.string());
+
+		std::filesystem::remove(vidpath, ec);
+
+		if (std::filesystem::exists(outpath)) {
+			notif("clip saved!");
+		} else {
+			notif("audio mix failed", true);
+		}
+	}
 };
 
-class $modify(EchoClipPL, PlayLayer) {
-    void resetLevel() {
-        if (g_engine.g_active) g_engine.markAttempt();
-        PlayLayer::resetLevel();
-    }
+static Engine g_eng;
 
-    void levelComplete() {
-        PlayLayer::levelComplete();
-        if (g_engine.g_active) {
-            g_engine.markAttempt();
-            g_engine.triggerClip();
-        }
-    }
+class $modify(EchoBGL, GJBaseGameLayer) {
+	struct Fields {
+		int lastPct = 0;
+		float frameTimer = 0.f;
+		int capW = 0;
+		int capH = 0;
+		float frameAccum = 0.f;
+		int frameCount = 0;
+	};
+
+	void update(float dt) override {
+		GJBaseGameLayer::update(dt);
+
+		if (!g_eng.active || !Mod::get()->getSettingValue<bool>("enabled")) {
+			return;
+		}
+		if (m_gameState.m_currentProgress <= 0) {
+			return;
+		}
+
+		int pct = (int)m_gameState.m_currentProgress;
+		if (pct != m_fields->lastPct) {
+			m_fields->lastPct = pct;
+			g_eng.checkBest(pct);
+		}
+
+		int fps = (int)Mod::get()->getSettingValue<int64_t>("target-fps");
+		float frameDt = 1.f / (float)fps;
+
+		m_fields->frameAccum += dt;
+
+		if (m_fields->frameAccum >= frameDt * 3.f) {
+			m_fields->frameAccum = frameDt;
+		}
+
+		if (m_fields->frameAccum < frameDt) {
+			return;
+		}
+
+		m_fields->frameAccum -= frameDt;
+		m_fields->frameCount++;
+
+		if (g_eng.frameSkip > 0 && (m_fields->frameCount % (g_eng.frameSkip + 1)) != 0) {
+			return;
+		}
+
+		grabFrameAsync();
+	}
+
+	void grabFrameAsync() {
+		GLint vp[4] = {};
+		glGetIntegerv(GL_VIEWPORT, vp);
+
+		int w = vp[2] & ~1;
+		int h = vp[3] & ~1;
+
+		if (w <= 0 || h <= 0) {
+			return;
+		}
+
+		size_t sz = (size_t)(w * h * 4);
+
+		if (m_fields->capW != w || m_fields->capH != h) {
+			m_fields->capW = w;
+			m_fields->capH = h;
+			
+			std::lock_guard<std::mutex> lk(g_eng.ringMtx);
+			for (auto& f : g_eng.ring) f.px.clear();
+			g_eng.ringCount = 0;
+			g_eng.frameGrabber.cleanup(); 
+		}
+
+		std::lock_guard<std::mutex> lk(g_eng.ringMtx);
+		if (g_eng.ring.empty()) return;
+
+		auto& fr = g_eng.ring[g_eng.ringHead];
+		if (fr.px.size() != sz) {
+			fr.px.resize(sz);
+		}
+
+		if (g_eng.frameGrabber.getFrame(fr.px)) {
+			fr.w = w;
+			fr.h = h;
+			fr.idx = g_eng.frameIdx.fetch_add(1);
+			g_eng.ringHead = (g_eng.ringHead + 1) % g_eng.maxFrames;
+			if (g_eng.ringCount < g_eng.maxFrames) g_eng.ringCount++;
+		}
+
+		g_eng.frameGrabber.beginCapture(vp[0], vp[1], w, h);
+	}
+};
+
+class $modify(EchoPL, PlayLayer) {
+	bool init(GJGameLevel* lvl, bool ur, bool doc) {
+		if (!PlayLayer::init(lvl, ur, doc)) {
+			return false;
+		}
+
+		std::lock_guard<std::mutex> lk(g_eng.bestMtx);
+		g_eng.bestPct = 0;
+
+		return true;
+	}
+
+	void resetLevel() {
+		if (g_eng.active) {
+			g_eng.markAtt();
+		}
+		PlayLayer::resetLevel();
+	}
+
+	void levelComplete() {
+		PlayLayer::levelComplete();
+
+		if (g_eng.active && Mod::get()->getSettingValue<bool>("clip-on-beat")) {
+			g_eng.clip();
+		}
+	}
 };
 
 $execute {
-    static auto g_keyHandle = geode::KeyboardInputEvent(cocos2d::enumKeyCodes::KEY_F6).listen(
-        [](cocos2d::enumKeyCodes, geode::KeyboardInputData& data) {
-            if (data.action == geode::KeyboardInputData::Action::Press)
-                g_engine.triggerClip();
-        }
-    );
+	static auto kh = geode::KeyboardInputEvent(cocos2d::enumKeyCodes::KEY_F6).listen(
+		[](cocos2d::enumKeyCodes, geode::KeyboardInputData& d) {
+			if (d.action == geode::KeyboardInputData::Action::Press) {
+				g_eng.clip();
+			}
+		}
+	);
 
-    Loader::get()->queueInMainThread([] {
-        g_engine.init();
-    });
+	Loader::get()->queueInMainThread([] {
+		g_eng.init();
+	});
 }

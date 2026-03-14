@@ -1,68 +1,82 @@
 {
-    "geode": "5.1.0",
+    "geode": "5.0.1",
     "gd": {
         "win": "2.2081"
     },
     "id": "axiom.echoclip",
     "name": "EchoClip",
-    "version": "1.0.0-beta.8",
+    "version": "1.0.0-beta.9",
     "developer": "Axiom",
-    "description": "record and clip your gameplay press f6 to save last 5 attempts, message axiom_thebsdude on discord if you have any issues or suggestions",
+    "description": "record and clip your gameplay press f6 to save last attempt, message axiom_thebsdude on discord if you have issues",
     "links": {
-        "source": "https://github.com/axiom-S25u/EchoClip"
-  },
+        "source": "https://github.com/axiom-S25u/EchoClip",
+        "community" :"https://discord.gg/TWn99qzmUA"
+    },
+    "resources": {
+		"files": [
+			"resources/main.png",
+			"resources/small.png",
+            "resources/logo.png"
+        ]
+    },
     "tags": ["utility", "universal", "enhancement"],
-    "dependencies": [
-        {
-            "id": "eclipse.ffmpeg-api",
-            "version": ">=2.0.0"
+
+    "dependencies": {
+        "eclipse.ffmpeg-api": {
+            "version": ">=2.0.0",
+            "importance": "required"
         }
-    ],
+    },
     "settings": {
         "enabled": {
             "name": "Enable Recording",
-            "description": "start recording automatically when entering a level",
+            "description": "start recording when entering a level",
             "type": "bool",
             "default": true
         },
-        "mic-audio-volume": {
-            "name": "Mic Volume",
-            "description": "microphone volume in percent",
-            "type": "float",
-            "default": 30.0,
-            "min": 0.0,
-            "max": 100.0
-        },
-        "capture-resolution": {
-            "name": "Capture Resolution",
-            "description": "higher = better quality but more cpu usage",
-            "type": "string",
-            "default": "1280x720",
-            "one-of": ["640x360", "854x480", "1280x720", "1920x1080"]
-        },
         "target-fps": {
             "name": "Target FPS",
-            "description": "recording framerate higher = smoother but more cpu usage",
+            "description": "recording framerate, higher = smoother but more cpu",
             "type": "int",
             "default": 30,
             "min": 15,
             "max": 60
         },
         "clip-length": {
-            "name": "Clip Length",
-            "description": "how many attempts to keep in the clip",
+            "name": "Clip Length (seconds)",
+            "description": "how many seconds to keep in the ring buffer",
             "type": "int",
-            "default": 5,
-            "min": 1,
-            "max": 10
+            "default": 30,
+            "min": 5,
+            "max": 120
         },
         "crf-quality": {
             "name": "Video Quality",
-            "description": "lower = better quality bigger file 23 is default 18 is visually lossless 28 is small",
+            "description": "lower = better quality, bigger file. 23 is default, 18 is nearly lossless, 35 is small",
             "type": "int",
             "default": 23,
             "min": 18,
             "max": 35
+        },
+        "mic-audio-volume": {
+            "name": "Mic Volume",
+            "description": "microphone volume 0-100",
+            "type": "float",
+            "default": 30.0,
+            "min": 0.0,
+            "max": 100.0
+        },
+        "clip-on-beat": {
+            "name": "Clip on Level Complete",
+            "description": "automatically save a clip when you beat the level",
+            "type": "bool",
+            "default": true
+        },
+        "clip-on-new-best": {
+            "name": "Clip on New Best",
+            "description": "automatically save a clip when you hit a new best percent",
+            "type": "bool",
+            "default": false
         }
     }
 }

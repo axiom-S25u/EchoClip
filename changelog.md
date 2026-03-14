@@ -1,3 +1,10 @@
+v1.0.1 - declouded build
+technical changes
+removed all Google Drive / cloud upload code and dependencies. clips are now saved strictly to local storage.
+
+ui changes
+cleaned gallery footer (removed drive connect/reconnect button and status text) so the UI only reflects local clips. 
+
 v1.0.0 - initial release
 technical changes
 direct-to-disk encoding: scrapped the ram-heavy buffer to prevent memory leaks. writes straight to the filesystem now.

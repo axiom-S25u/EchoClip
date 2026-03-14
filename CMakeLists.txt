@@ -19,10 +19,23 @@ if (NOT DEFINED ENV{GEODE_SDK})
 endif()
 
 add_subdirectory($ENV{GEODE_SDK} ${CMAKE_CURRENT_BINARY_DIR}/geode)
+
+target_include_directories(${PROJECT_NAME} PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/src"
+)
+
 setup_geode_mod(${PROJECT_NAME})
 
 target_link_libraries(${PROJECT_NAME}
-    dxgi.lib
-    d3d11.lib
-    ole32.lib
+    geode-sdk
+    ole32
 )
+
+file(GLOB PNG_RESOURCES CONFIGURE_DEPENDS
+    "${CMAKE_CURRENT_SOURCE_DIR}/resources/*.png"
+)
+
+foreach(PNG_FILE ${PNG_RESOURCES})
+    get_filename_component(PNG_NAME ${PNG_FILE} NAME)
+    configure_file(${PNG_FILE} "${CMAKE_CURRENT_BINARY_DIR}/resources/${PNG_NAME}" COPYONLY)
+endforeach()
