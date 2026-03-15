@@ -5,26 +5,25 @@
     },
     "id": "axiom.echoclip",
     "name": "EchoClip",
-    "version": "1.0.1",
+    "version": "v1.0.1",
     "developer": "Axiom",
-    "description": "record and clip your gameplay press f6 to save last attempt, message axiom_thebsdude on discord if you have issues",
+    "description": "record and clip your gameplay. bind a key to save the last attempt, message axiom_thebsdude on discord if you have issues",
     "links": {
         "source": "https://github.com/axiom-S25u/EchoClip",
-        "community" :"https://discord.gg/TWn99qzmUA"
+        "community": "https://discord.gg/TWn99qzmUA"
     },
     "resources": {
-		"files": [
-			"resources/main.png",
-			"resources/small.png",
+        "files": [
+            "resources/main.png",
+            "resources/small.png",
             "resources/logo.png"
         ]
     },
     "tags": ["utility", "universal", "enhancement"],
-
     "dependencies": {
         "eclipse.ffmpeg-api": {
             "version": ">=2.0.0",
-            "importance": "required"
+            "required": true
         }
     },
     "settings": {
@@ -33,6 +32,13 @@
             "description": "start recording when entering a level",
             "type": "bool",
             "default": true
+        },
+        "clip-keybind": {
+            "name": "Save Clip",
+            "description": "press to save the last N seconds as a clip",
+            "type": "keybind",
+            "default": "F6",
+            "category": "gameplay"
         },
         "target-fps": {
             "name": "Target FPS",
@@ -63,6 +69,14 @@
             "description": "microphone volume 0-100",
             "type": "float",
             "default": 30.0,
+            "min": 0.0,
+            "max": 100.0
+        },
+        "game-audio-volume": {
+            "name": "Game Volume",
+            "description": "game audio volume 0-100",
+            "type": "float",
+            "default": 70.0,
             "min": 0.0,
             "max": 100.0
         },

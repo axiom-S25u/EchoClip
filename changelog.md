@@ -1,3 +1,12 @@
+v1.0.2 - quality of life
+new features
+fixed bugs, thats it
+
+ui changes
+added a confirmation popup when deleting clips to prevent accidental deletion.
+added a hint in the gallery for new users on how to record their first clip.
+compleatly revampted the ui. was too bad
+
 v1.0.1 - declouded build
 technical changes
 removed all Google Drive / cloud upload code and dependencies. clips are now saved strictly to local storage.
