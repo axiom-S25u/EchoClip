@@ -179,6 +179,7 @@ bool EchoClipGallery::init() {
     setPosition({0.f, 0.f});
     setTouchEnabled(true);
     setKeyboardEnabled(true);
+    setKeypadEnabled(true);
 
     float panelW = std::min(pw - 40.f, 860.f);
     float panelH = std::min(ph - 40.f, 540.f);
@@ -337,6 +338,10 @@ bool EchoClipGallery::init() {
 
 void EchoClipGallery::onClose(CCObject*) {
     this->removeFromParent();
+}
+
+void EchoClipGallery::keyBackClicked() {
+    this->onClose(nullptr);
 }
 
 void EchoClipGallery::loadClips() {

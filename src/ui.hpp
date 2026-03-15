@@ -133,6 +133,7 @@ private:
     std::vector<ClipInfo> m_clips;
     std::vector<ClipInfo> m_filtered;
 
+    void keyBackClicked();
     void onClose(CCObject*);
     void loadClips();
     void buildGrid();
