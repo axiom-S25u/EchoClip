@@ -164,9 +164,22 @@ void ClipCardNode::onDelete(CCObject*) {
                 Notification::create("failed to delete", NotificationIcon::Error)->show();
             } else {
                 Notification::create("clip deleted", NotificationIcon::Success)->show();
+                EchoClipGallery::refreshIfOpen(false);
             }
         }
     );
+}
+
+void EchoClipGallery::refreshIfOpen(bool showNotification) {
+    Loader::get()->queueInMainThread([showNotification] {
+        auto scene = CCDirector::get()->getRunningScene();
+        if (!scene) return;
+        auto existing = scene->getChildByID("echoclip-gallery");
+        if (!existing) return;
+        auto gallery = typeinfo_cast<EchoClipGallery*>(existing);
+        if (!gallery) return;
+        gallery->refreshFromDisk(showNotification);
+    });
 }
 
 bool EchoClipGallery::init() {
@@ -453,6 +466,10 @@ void EchoClipGallery::onOpenSupport(CCObject*) {
 }
 
 void EchoClipGallery::onRefresh(CCObject*) {
+    refreshFromDisk(true);
+}
+
+void EchoClipGallery::refreshFromDisk(bool showNotification) {
     m_clips.clear();
     m_filtered.clear();
 
@@ -464,5 +481,7 @@ void EchoClipGallery::onRefresh(CCObject*) {
     if (!m_filtered.empty()) buildGrid();
 
     updateCount();
-    Notification::create("refreshed", NotificationIcon::Success)->show();
+    if (showNotification) {
+        Notification::create("refreshed", NotificationIcon::Success)->show();
+    }
 }

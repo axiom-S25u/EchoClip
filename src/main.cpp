@@ -3,6 +3,7 @@
 #include <Geode/modify/PlayLayer.hpp>
 #include <Geode/binding/PlayLayer.hpp>
 #include <Geode/loader/SettingV3.hpp>
+#include "ui.hpp"
 #include <eclipse.ffmpeg-api/include/recorder.hpp>
 #include <eclipse.ffmpeg-api/include/audio_mixer.hpp>
 #include <atomic>
@@ -544,6 +545,7 @@ private:
         if (alen == 0) {
             std::filesystem::rename(vidpath, outpath, ec);
             notif("clip saved (no audio)");
+            EchoClipGallery::refreshIfOpen(false);
             return;
         }
 
@@ -572,6 +574,7 @@ private:
 
         if (std::filesystem::exists(outpath)) {
             notif("clip saved!");
+            EchoClipGallery::refreshIfOpen(false);
         } else {
             notif("audio mix failed", true);
         }
