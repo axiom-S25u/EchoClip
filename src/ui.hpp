@@ -140,6 +140,7 @@ private:
     void buildGrid();
     void buildGrid(float panelW);
     void updateCount();
+    void onOpenSettings(CCObject*);
     void onOpenFolder(CCObject*);
     void onOpenSupport(CCObject*);
     void onRefresh(CCObject*);

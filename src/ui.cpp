@@ -1,6 +1,7 @@
 #include "ui.hpp"
 #include <Geode/Geode.hpp>
 #include <Geode/cocos/extensions/GUI/CCScrollView/CCScrollView.h>
+#include <Geode/ui/GeodeUI.hpp>
 #include <filesystem>
 
 #ifdef GEODE_IS_WINDOWS
@@ -315,11 +316,22 @@ bool EchoClipGallery::init() {
     btmMenu->setPosition({panelW * 0.5f, 22.f});
     panel->addChild(btmMenu, 3);
 
+    auto settingsLbl = CCLabelBMFont::create("settings", "chatFont.fnt");
+    settingsLbl->setScale(0.4f);
+    settingsLbl->setColor({132, 160, 208});
+    auto settingsBtn = CCMenuItemSpriteExtra::create(settingsLbl, this, menu_selector(EchoClipGallery::onOpenSettings));
+    settingsBtn->setAnchorPoint({0.f, 0.5f});
+    settingsBtn->setPosition({18.f, 22.f});
+    auto settingsMenu = CCMenu::create();
+    settingsMenu->setPosition({0.f, 0.f});
+    settingsMenu->addChild(settingsBtn);
+    panel->addChild(settingsMenu, 3);
+
     auto folderLbl = CCLabelBMFont::create("open folder", "chatFont.fnt");
     folderLbl->setScale(0.4f);
     folderLbl->setColor({122, 176, 122});
     auto folderBtn = CCMenuItemSpriteExtra::create(folderLbl, this, menu_selector(EchoClipGallery::onOpenFolder));
-    folderBtn->setPositionX(-145.f);
+    folderBtn->setPositionX(-110.f);
     btmMenu->addChild(folderBtn);
 
     auto refSpr = CCSprite::createWithSpriteFrameName("GJ_updateBtn_001.png");
@@ -448,6 +460,10 @@ void EchoClipGallery::updateCount() {
     if (!m_countLabel) return;
     std::string cnt = std::to_string(m_filtered.size()) + " clips";
     m_countLabel->setString(cnt.c_str());
+}
+
+void EchoClipGallery::onOpenSettings(CCObject*) {
+    geode::openSettingsPopup(Mod::get());
 }
 
 void EchoClipGallery::onOpenFolder(CCObject*) {
