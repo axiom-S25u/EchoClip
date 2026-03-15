@@ -7,7 +7,6 @@
 #include <eclipse.ffmpeg-api/include/audio_mixer.hpp>
 #include <atomic>
 #include <chrono>
-#include <condition_variable>
 #include <deque>
 #include <filesystem>
 #include <mutex>
@@ -15,8 +14,6 @@
 #include <vector>
 #include <cmath>
 #include <string>
-#include <queue>
-#include <memory>
 #include <algorithm>
 #include <cctype>
 

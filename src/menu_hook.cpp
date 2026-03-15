@@ -11,7 +11,7 @@ class $modify(EchoClipMenuBtn, MenuLayer) {
         if (!bottomMenu) return true;
 
         auto resDir = Mod::get()->getResourcesDir();
-        auto spr = CCSprite::create((resDir / "logo.png").string().c_str());
+        auto spr = CCSprite::create("logo.png"_spr);
         if (!spr) {
             spr = CCSprite::createWithSpriteFrameName("GJ_playBtn2_001.png");
             if (spr) spr->setColor({160, 160, 175});
