@@ -1,13 +1,13 @@
 {
-    "geode": "5.0.1",
+    "geode": "5.3.0",
     "gd": {
         "win": "2.2081"
     },
     "id": "axiom.echoclip",
     "name": "EchoClip",
-    "version": "v1.0.2",
+    "version": "v1.0.3",
     "developer": "Axiom",
-    "description": "record and clip your gameplay. bind a key to save the last attempt, message axiom_thebsdude on discord if you have issues",
+    "description": "Clip your gameplay. Save the last attempt",
     "links": {
         "source": "https://github.com/axiom-S25u/EchoClip",
         "community": "https://discord.gg/TWn99qzmUA"
