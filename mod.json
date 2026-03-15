@@ -16,7 +16,8 @@
         "files": [
             "resources/main.png",
             "resources/small.png",
-            "resources/logo.png"
+            "resources/logo.png",
+            "resources/new-icon.png"
         ]
     },
     "tags": ["utility", "universal", "enhancement"],

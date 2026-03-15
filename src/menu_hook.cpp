@@ -10,8 +10,7 @@ class $modify(EchoClipMenuBtn, MenuLayer) {
         auto bottomMenu = this->getChildByID("bottom-menu");
         if (!bottomMenu) return true;
 
-        auto resDir = Mod::get()->getResourcesDir();
-        auto spr = CCSprite::create("logo.png"_spr);
+        auto spr = CCSprite::create("new-icon.png"_spr);
         if (!spr) {
             spr = CCSprite::createWithSpriteFrameName("GJ_playBtn2_001.png");
             if (spr) spr->setColor({160, 160, 175});
@@ -19,7 +18,7 @@ class $modify(EchoClipMenuBtn, MenuLayer) {
 
         if (!spr) return true;
 
-        spr->setScale(0.45f);
+        spr->setScale(0.33f);
 
         auto btn = CCMenuItemSpriteExtra::create(
             spr,
