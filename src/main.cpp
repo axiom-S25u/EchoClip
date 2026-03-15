@@ -469,9 +469,10 @@ private:
 
         std::string base = safename(mark.lvlName) + "_att" + std::to_string(mark.att);
         std::string stem = makeUniqueStem(base);
+        bool remuxToMp4 = Mod::get()->getSettingValue<bool>("auto-remux-mp4");
 
         std::filesystem::path vidpath = dir / (stem + "_tmp.mp4");
-        std::filesystem::path outpath = dir / (stem + ".mkv");
+        std::filesystem::path outpath = dir / (stem + (remuxToMp4 ? ".mp4" : ".mkv"));
 
         if (frames.empty()) {
             notif("frame error", true);
@@ -544,7 +545,7 @@ private:
 
         if (alen == 0) {
             std::filesystem::rename(vidpath, outpath, ec);
-            notif("clip saved (no audio)");
+            notif(remuxToMp4 ? "clip saved mp4 (no audio)" : "clip saved (no audio)");
             EchoClipGallery::refreshIfOpen(false);
             return;
         }
@@ -573,7 +574,7 @@ private:
         std::filesystem::remove(vidpath, ec);
 
         if (std::filesystem::exists(outpath)) {
-            notif("clip saved!");
+            notif(remuxToMp4 ? "clip saved mp4!" : "clip saved!");
             EchoClipGallery::refreshIfOpen(false);
         } else {
             notif("audio mix failed", true);

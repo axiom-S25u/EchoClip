@@ -92,6 +92,12 @@
             "description": "automatically save a clip when you hit a new best percent",
             "type": "bool",
             "default": false
+        },
+        "auto-remux-mp4": {
+            "name": "Auto Remux to MP4",
+            "description": "when enabled, save finished clips as mp4 instead of mkv",
+            "type": "bool",
+            "default": false
         }
     }
 }
