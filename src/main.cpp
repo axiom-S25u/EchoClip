@@ -99,6 +99,9 @@ class WasapiCapture {
 public:
     enum class Mode { Mic, Loopback };
     explicit WasapiCapture(Mode m) : m_mode(m) {}
+    ~WasapiCapture() {
+        stop();
+    }
 
     bool start(int clipLenSec) {
         CoInitializeEx(nullptr, COINIT_MULTITHREADED);
@@ -267,6 +270,7 @@ public:
 
     std::mutex exportMtx;
     std::atomic<bool> exporting{false};
+    std::thread exportThread;
 
     int bestPct = 0;
     std::mutex bestMtx;
@@ -319,10 +323,17 @@ public:
     }
 
     void shutdown() {
+        if (exportThread.joinable()) {
+            exportThread.join();
+        }
         if (!active) return;
         active = false;
         mic.stop();
         gd.stop();
+    }
+
+    ~Engine() {
+        shutdown();
     }
 
     void markAtt() {
@@ -408,10 +419,14 @@ public:
             return;
         }
 
-        std::thread([this, frames = std::move(frames), ma = std::move(ma), ga = std::move(ga), mark]() mutable {
+        if (exportThread.joinable()) {
+            exportThread.join();
+        }
+
+        exportThread = std::thread([this, frames = std::move(frames), ma = std::move(ma), ga = std::move(ga), mark]() mutable {
             doExport(std::move(frames), std::move(ma), std::move(ga), mark);
             exporting = false;
-        }).detach();
+        });
     }
 
 private:
