@@ -3,11 +3,11 @@
 #include <Geode/modify/PlayLayer.hpp>
 #include <Geode/binding/PlayLayer.hpp>
 #include <Geode/loader/SettingV3.hpp>
+#include "ui.hpp"
 #include <eclipse.ffmpeg-api/include/recorder.hpp>
 #include <eclipse.ffmpeg-api/include/audio_mixer.hpp>
 #include <atomic>
 #include <chrono>
-#include <condition_variable>
 #include <deque>
 #include <filesystem>
 #include <mutex>
@@ -15,8 +15,6 @@
 #include <vector>
 #include <cmath>
 #include <string>
-#include <queue>
-#include <memory>
 #include <algorithm>
 #include <cctype>
 
@@ -102,6 +100,9 @@ class WasapiCapture {
 public:
     enum class Mode { Mic, Loopback };
     explicit WasapiCapture(Mode m) : m_mode(m) {}
+    ~WasapiCapture() {
+        stop();
+    }
 
     bool start(int clipLenSec) {
         CoInitializeEx(nullptr, COINIT_MULTITHREADED);
@@ -270,6 +271,7 @@ public:
 
     std::mutex exportMtx;
     std::atomic<bool> exporting{false};
+    std::thread exportThread;
 
     int bestPct = 0;
     std::mutex bestMtx;
@@ -322,10 +324,17 @@ public:
     }
 
     void shutdown() {
+        if (exportThread.joinable()) {
+            exportThread.join();
+        }
         if (!active) return;
         active = false;
         mic.stop();
         gd.stop();
+    }
+
+    ~Engine() {
+        shutdown();
     }
 
     void markAtt() {
@@ -411,10 +420,14 @@ public:
             return;
         }
 
-        std::thread([this, frames = std::move(frames), ma = std::move(ma), ga = std::move(ga), mark]() mutable {
+        if (exportThread.joinable()) {
+            exportThread.join();
+        }
+
+        exportThread = std::thread([this, frames = std::move(frames), ma = std::move(ma), ga = std::move(ga), mark]() mutable {
             doExport(std::move(frames), std::move(ma), std::move(ga), mark);
             exporting = false;
-        }).detach();
+        });
     }
 
 private:
@@ -456,9 +469,10 @@ private:
 
         std::string base = safename(mark.lvlName) + "_att" + std::to_string(mark.att);
         std::string stem = makeUniqueStem(base);
+        bool remuxToMp4 = Mod::get()->getSettingValue<bool>("auto-remux-mp4");
 
         std::filesystem::path vidpath = dir / (stem + "_tmp.mp4");
-        std::filesystem::path outpath = dir / (stem + ".mkv");
+        std::filesystem::path outpath = dir / (stem + (remuxToMp4 ? ".mp4" : ".mkv"));
 
         if (frames.empty()) {
             notif("frame error", true);
@@ -531,7 +545,8 @@ private:
 
         if (alen == 0) {
             std::filesystem::rename(vidpath, outpath, ec);
-            notif("clip saved (no audio)");
+            notif(remuxToMp4 ? "clip saved mp4 (no audio)" : "clip saved (no audio)");
+            EchoClipGallery::refreshIfOpen(false);
             return;
         }
 
@@ -559,7 +574,8 @@ private:
         std::filesystem::remove(vidpath, ec);
 
         if (std::filesystem::exists(outpath)) {
-            notif("clip saved!");
+            notif(remuxToMp4 ? "clip saved mp4!" : "clip saved!");
+            EchoClipGallery::refreshIfOpen(false);
         } else {
             notif("audio mix failed", true);
         }

@@ -1,6 +1,7 @@
 #include "ui.hpp"
 #include <Geode/Geode.hpp>
 #include <Geode/cocos/extensions/GUI/CCScrollView/CCScrollView.h>
+#include <Geode/ui/GeodeUI.hpp>
 #include <filesystem>
 
 #ifdef GEODE_IS_WINDOWS
@@ -164,9 +165,22 @@ void ClipCardNode::onDelete(CCObject*) {
                 Notification::create("failed to delete", NotificationIcon::Error)->show();
             } else {
                 Notification::create("clip deleted", NotificationIcon::Success)->show();
+                EchoClipGallery::refreshIfOpen(false);
             }
         }
     );
+}
+
+void EchoClipGallery::refreshIfOpen(bool showNotification) {
+    Loader::get()->queueInMainThread([showNotification] {
+        auto scene = CCDirector::get()->getRunningScene();
+        if (!scene) return;
+        auto existing = scene->getChildByID("echoclip-gallery");
+        if (!existing) return;
+        auto gallery = typeinfo_cast<EchoClipGallery*>(existing);
+        if (!gallery) return;
+        gallery->refreshFromDisk(showNotification);
+    });
 }
 
 bool EchoClipGallery::init() {
@@ -179,6 +193,7 @@ bool EchoClipGallery::init() {
     setPosition({0.f, 0.f});
     setTouchEnabled(true);
     setKeyboardEnabled(true);
+    setKeypadEnabled(true);
 
     float panelW = std::min(pw - 40.f, 860.f);
     float panelH = std::min(ph - 40.f, 540.f);
@@ -301,11 +316,22 @@ bool EchoClipGallery::init() {
     btmMenu->setPosition({panelW * 0.5f, 22.f});
     panel->addChild(btmMenu, 3);
 
+    auto settingsLbl = CCLabelBMFont::create("settings", "chatFont.fnt");
+    settingsLbl->setScale(0.4f);
+    settingsLbl->setColor({132, 160, 208});
+    auto settingsBtn = CCMenuItemSpriteExtra::create(settingsLbl, this, menu_selector(EchoClipGallery::onOpenSettings));
+    settingsBtn->setAnchorPoint({0.f, 0.5f});
+    settingsBtn->setPosition({18.f, 22.f});
+    auto settingsMenu = CCMenu::create();
+    settingsMenu->setPosition({0.f, 0.f});
+    settingsMenu->addChild(settingsBtn);
+    panel->addChild(settingsMenu, 3);
+
     auto folderLbl = CCLabelBMFont::create("open folder", "chatFont.fnt");
     folderLbl->setScale(0.4f);
     folderLbl->setColor({122, 176, 122});
     auto folderBtn = CCMenuItemSpriteExtra::create(folderLbl, this, menu_selector(EchoClipGallery::onOpenFolder));
-    folderBtn->setPositionX(-145.f);
+    folderBtn->setPositionX(-110.f);
     btmMenu->addChild(folderBtn);
 
     auto refSpr = CCSprite::createWithSpriteFrameName("GJ_updateBtn_001.png");
@@ -337,6 +363,10 @@ bool EchoClipGallery::init() {
 
 void EchoClipGallery::onClose(CCObject*) {
     this->removeFromParent();
+}
+
+void EchoClipGallery::keyBackClicked() {
+    this->onClose(nullptr);
 }
 
 void EchoClipGallery::loadClips() {
@@ -432,6 +462,10 @@ void EchoClipGallery::updateCount() {
     m_countLabel->setString(cnt.c_str());
 }
 
+void EchoClipGallery::onOpenSettings(CCObject*) {
+    geode::openSettingsPopup(Mod::get());
+}
+
 void EchoClipGallery::onOpenFolder(CCObject*) {
 #ifdef GEODE_IS_WINDOWS
     auto dir = Mod::get()->getSaveDir() / "clips";
@@ -448,6 +482,10 @@ void EchoClipGallery::onOpenSupport(CCObject*) {
 }
 
 void EchoClipGallery::onRefresh(CCObject*) {
+    refreshFromDisk(true);
+}
+
+void EchoClipGallery::refreshFromDisk(bool showNotification) {
     m_clips.clear();
     m_filtered.clear();
 
@@ -459,5 +497,7 @@ void EchoClipGallery::onRefresh(CCObject*) {
     if (!m_filtered.empty()) buildGrid();
 
     updateCount();
-    Notification::create("refreshed", NotificationIcon::Success)->show();
+    if (showNotification) {
+        Notification::create("refreshed", NotificationIcon::Success)->show();
+    }
 }

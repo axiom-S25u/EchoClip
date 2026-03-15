@@ -1,13 +1,13 @@
 {
-    "geode": "5.0.1",
+    "geode": "5.3.0",
     "gd": {
         "win": "2.2081"
     },
     "id": "axiom.echoclip",
     "name": "EchoClip",
-    "version": "v1.0.2",
+    "version": "v1.0.3",
     "developer": "Axiom",
-    "description": "record and clip your gameplay. bind a key to save the last attempt, message axiom_thebsdude on discord if you have issues",
+    "description": "Clip your gameplay. Save the last attempt",
     "links": {
         "source": "https://github.com/axiom-S25u/EchoClip",
         "community": "https://discord.gg/TWn99qzmUA"
@@ -16,7 +16,8 @@
         "files": [
             "resources/main.png",
             "resources/small.png",
-            "resources/logo.png"
+            "resources/logo.png",
+            "resources/new-icon.png"
         ]
     },
     "tags": ["utility", "universal", "enhancement"],
@@ -89,6 +90,12 @@
         "clip-on-new-best": {
             "name": "Clip on New Best",
             "description": "automatically save a clip when you hit a new best percent",
+            "type": "bool",
+            "default": false
+        },
+        "auto-remux-mp4": {
+            "name": "Auto Remux to MP4",
+            "description": "when enabled, save finished clips as mp4 instead of mkv",
             "type": "bool",
             "default": false
         }

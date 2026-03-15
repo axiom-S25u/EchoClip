@@ -4,7 +4,6 @@
 #include <filesystem>
 #include <vector>
 #include <string>
-#include <algorithm>
 #include <chrono>
 #include <ctime>
 
@@ -126,6 +125,8 @@ public:
         scene->addChild(layer, 9999);
     }
 
+    static void refreshIfOpen(bool showNotification = false);
+
 private:
     CCScrollView* m_scrollView = nullptr;
     CCLayer* m_container = nullptr;
@@ -133,12 +134,15 @@ private:
     std::vector<ClipInfo> m_clips;
     std::vector<ClipInfo> m_filtered;
 
+    void keyBackClicked();
     void onClose(CCObject*);
     void loadClips();
     void buildGrid();
     void buildGrid(float panelW);
     void updateCount();
+    void onOpenSettings(CCObject*);
     void onOpenFolder(CCObject*);
     void onOpenSupport(CCObject*);
     void onRefresh(CCObject*);
+    void refreshFromDisk(bool showNotification = false);
 };
