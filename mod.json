@@ -5,7 +5,7 @@
     },
     "id": "axiom.echoclip",
     "name": "EchoClip",
-    "version": "v1.0.2",
+    "version": "v1.0.4",
     "developer": "Axiom",
     "description": "record and clip your gameplay. bind a key to save the last attempt, message axiom_thebsdude on discord if you have issues",
     "links": {
@@ -19,7 +19,7 @@
             "resources/logo.png"
         ]
     },
-    "tags": ["utility", "universal", "enhancement"],
+    "tags": ["utility", "universal", "enhancement", "gameplay"],
     "dependencies": {
         "eclipse.ffmpeg-api": {
             "version": ">=2.0.0",
@@ -37,8 +37,7 @@
             "name": "Save Clip",
             "description": "press to save the last N seconds as a clip",
             "type": "keybind",
-            "default": "F6",
-            "category": "gameplay"
+            "default": "F6"
         },
         "target-fps": {
             "name": "Target FPS",
@@ -48,43 +47,42 @@
             "min": 15,
             "max": 60
         },
-        "clip-length": {
-            "name": "Clip Length (seconds)",
-            "description": "how many seconds to keep in the ring buffer",
+        "bitrate": {
+            "name": "Bitrate (Mbps)",
+            "description": "video bitrate for the temp recording",
             "type": "int",
-            "default": 30,
-            "min": 5,
-            "max": 120
+            "default": 12,
+            "min": 1,
+            "max": 50
         },
-        "crf-quality": {
-            "name": "Video Quality",
-            "description": "lower = better quality, bigger file. 23 is default, 18 is nearly lossless, 35 is small",
-            "type": "int",
-            "default": 23,
-            "min": 18,
-            "max": 35
-        },
-        "mic-audio-volume": {
-            "name": "Mic Volume",
-            "description": "microphone volume 0-100",
-            "type": "float",
-            "default": 30.0,
-            "min": 0.0,
-            "max": 100.0
-        },
-        "game-audio-volume": {
-            "name": "Game Volume",
-            "description": "game audio volume 0-100",
-            "type": "float",
-            "default": 70.0,
-            "min": 0.0,
-            "max": 100.0
-        },
-        "clip-on-beat": {
-            "name": "Clip on Level Complete",
-            "description": "automatically save a clip when you beat the level",
+        "high-res": {
+            "name": "High Resolution",
+            "description": "record at 1080p instead of 720p",
             "type": "bool",
-            "default": true
+            "default": false
+        },
+        "codec": {
+            "name": "Video Codec",
+            "description": "hardware encoding is better if your gpu supports it",
+            "type": "string",
+            "default": "Auto",
+            "controls": ["Auto", "h264_nvenc", "h264_amf", "h264_qsv", "libx264"]
+        },
+        "att-clip-count": {
+            "name": "Attempt History Count",
+            "description": "how many attempts back the clip should start from",
+            "type": "int",
+            "default": 1,
+            "min": 1,
+            "max": 5
+        },
+        "storage-limit": {
+            "name": "Storage Limit (GB)",
+            "description": "automatically delete old clips when folder exceeds this size",
+            "type": "int",
+            "default": 5,
+            "min": 1,
+            "max": 100
         },
         "clip-on-new-best": {
             "name": "Clip on New Best",

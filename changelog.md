@@ -1,3 +1,9 @@
+v1.0.4
+new/less features
+removed audio since.. im not doing that (if someone finds a way make a pr)
+made it not eat ram (it uses a lot less ram, a few hundred mb MAX)
+better stuff
+
 v1.0.2 - quality of life
 new features
 fixed bugs, thats it

@@ -4,7 +4,6 @@
 #include <filesystem>
 #include <vector>
 #include <string>
-#include <algorithm>
 #include <chrono>
 #include <ctime>
 
@@ -100,7 +99,7 @@ private:
 
 class EchoClipGallery : public CCLayerColor {
 protected:
-    bool init();
+    bool init() override;
 
 public:
     static EchoClipGallery* create() {
@@ -126,6 +125,11 @@ public:
         scene->addChild(layer, 9999);
     }
 
+    static void refreshIfOpen(bool showNotification = false);
+
+    void keyBackClicked() override;
+    bool ccTouchBegan(CCTouch* touch, CCEvent* event) override;
+
 private:
     CCScrollView* m_scrollView = nullptr;
     CCLayer* m_container = nullptr;
@@ -138,7 +142,9 @@ private:
     void buildGrid();
     void buildGrid(float panelW);
     void updateCount();
+    void onOpenSettings(CCObject*);
     void onOpenFolder(CCObject*);
     void onOpenSupport(CCObject*);
     void onRefresh(CCObject*);
+    void refreshFromDisk(bool showNotification = false);
 };
