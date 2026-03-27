@@ -5,84 +5,83 @@
     },
     "id": "axiom.echoclip",
     "name": "EchoClip",
-    "version": "v1.0.4",
+    "version": "v1.1.0",
     "developer": "Axiom",
-    "description": "record and clip your gameplay. bind a key to save the last attempt, message axiom_thebsdude on discord if you have issues",
+    "description": "record and save clips of your gameplay locally.",
     "links": {
         "source": "https://github.com/axiom-S25u/EchoClip",
         "community": "https://discord.gg/TWn99qzmUA"
     },
     "resources": {
         "files": [
-            "resources/main.png",
-            "resources/small.png",
+            "resources/gallery.png",
             "resources/logo.png"
         ]
     },
-    "tags": ["utility", "universal", "enhancement", "gameplay"],
     "dependencies": {
-        "eclipse.ffmpeg-api": {
-            "version": ">=2.0.0",
-            "required": true
-        }
+        "eclipse.ffmpeg-api": ">=v2.0.0"
+
     },
     "settings": {
         "enabled": {
-            "name": "Enable Recording",
-            "description": "start recording when entering a level",
+            "name": "Enabled",
+            "description": "toggle the recording system on or off.",
             "type": "bool",
             "default": true
         },
-        "clip-keybind": {
-            "name": "Save Clip",
-            "description": "press to save the last N seconds as a clip",
-            "type": "keybind",
-            "default": "F6"
-        },
         "target-fps": {
             "name": "Target FPS",
-            "description": "recording framerate, higher = smoother but more cpu",
+            "description": "the framerate of the output video.",
             "type": "int",
             "default": 30,
-            "min": 15,
-            "max": 60
+            "min": 1,
+            "max": 120
         },
         "bitrate": {
             "name": "Bitrate (Mbps)",
-            "description": "video bitrate for the temp recording",
+            "description": "the video quality. higher is better but uses more space.",
             "type": "int",
             "default": 12,
             "min": 1,
-            "max": 50
+            "max": 35
         },
-        "high-res": {
-            "name": "High Resolution",
-            "description": "record at 1080p instead of 720p",
-            "type": "bool",
-            "default": false
-        },
-        "codec": {
-            "name": "Video Codec",
-            "description": "hardware encoding is better if your gpu supports it",
+        "output-res": {
+            "name": "Output Resolution",
+            "description": "The vertical resolution of the saved clip.",
             "type": "string",
-            "default": "Auto",
-            "controls": ["Auto", "h264_nvenc", "h264_amf", "h264_qsv", "libx264"]
+            "default": "720p",
+            "one-of": ["480p", "720p", "1080p", "1440p"]
         },
-        "att-clip-count": {
-            "name": "Attempt History Count",
-            "description": "how many attempts back the clip should start from",
+        "recording-scale": {
+            "name": "Recording Scale",
+            "description": "Scale down recording resolution to improve performance",
             "type": "int",
-            "default": 1,
-            "min": 1,
-            "max": 5
+            "default": 100,
+            "min": 25,
+            "max": 100,
+            "step": 25
         },
         "storage-limit": {
             "name": "Storage Limit (GB)",
-            "description": "automatically delete old clips when folder exceeds this size",
+            "description": "automatically delete old clips when this limit is reached.",
             "type": "int",
-            "default": 5,
+            "default": 10,
             "min": 1,
-            "max": 100
+            "max": 1000
+        },
+        "att-clip-count": {
+            "name": "Attempts to Clip",
+            "description": "how many attempts back the clip should go (for the hotkey).",
+            "type": "int",
+            "default": 1,
+            "min": 1,
+            "max": 20
+        },
+        "clip-keybind": {
+            "name": "Clip Hotkey",
+            "description": "the key to manually save a clip (default F6).",
+            "type": "keybind",
+            "default": "F6"
         },
         "clip-on-new-best": {
             "name": "Clip on New Best",

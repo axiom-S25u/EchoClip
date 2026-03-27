@@ -3,36 +3,31 @@
 
 using namespace geode::prelude;
 
-class $modify(EchoClipMenuBtn, MenuLayer) {
+class $modify(MenuHook, MenuLayer) {
     bool init() {
         if (!MenuLayer::init()) return false;
 
-        auto bottomMenu = this->getChildByID("bottom-menu");
-        if (!bottomMenu) return true;
+        CCMenu* menu = (CCMenu*)getChildByID("bottom-menu");
+        if (!menu) return true;
 
-        auto spr = CCSprite::create("new-icon.png"_spr);
-        if (!spr) {
-            spr = CCSprite::createWithSpriteFrameName("GJ_playBtn2_001.png");
-            if (spr) spr->setColor({160, 160, 175});
+        CCSprite* s = CCSprite::create("gallery.png"_spr); // idk why i use the samsung gallery icon but id go with it
+        if (!s) {
+            s = CCSprite::createWithSpriteFrameName("GJ_playBtn2_001.png");
+            if (s) s->setColor({160, 160, 175});
         }
+        if (!s) return true;
 
-        if (!spr) return true;
+        s->setScale(0.5f);
 
-        spr->setScale(0.33f);
-
-        auto btn = CCMenuItemSpriteExtra::create(
-            spr,
-            this,
-            menu_selector(EchoClipMenuBtn::onOpenGallery)
-        );
+        auto btn = CCMenuItemSpriteExtra::create(s, this, menu_selector(MenuHook::onGallery));
         btn->setID("echoclip-gallery-btn");
-        bottomMenu->addChild(btn);
-        bottomMenu->updateLayout();
+        menu->addChild(btn);
+        menu->updateLayout();
 
         return true;
     }
 
-    void onOpenGallery(CCObject*) {
-        EchoClipGallery::open();
+    void onGallery(CCObject*) {
+        Gallery::open();
     }
 };

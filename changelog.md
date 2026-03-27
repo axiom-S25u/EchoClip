@@ -1,3 +1,18 @@
+
+v1.1.0
+optimised it
+fixed massive queue bottleneck
+fixed GL sync object leaks
+capped bitrate and scale to stop users from nuking their fps 
+
+v1.0.9
+nothing, i just forgot to update the version number
+
+v1.0.5
+pbo stuff
+no more ram bloat (yes it uses ram, had max 500mb usage)
+better ui
+less lag
 v1.0.4
 new/less features
 removed audio since.. im not doing that (if someone finds a way make a pr)
@@ -31,8 +46,5 @@ fmod audio mixing: manually mixed game audio and microphone streams at a 70/30 r
 hardware acceleration: added NVENC/CUDA support to keep game physics stable while recording.
 
 automatic trimming: implemented an ffmpeg seek-and-trim system for the save hotkey.
-
-other stuff
-15 min buffer: increased frame limit to 27,000 frames for XL levels.
 
 low overhead: optimized the encoding thread to stop pc combustion.

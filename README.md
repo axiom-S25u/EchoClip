@@ -5,7 +5,3 @@ records your last 5 attempts and mixes in your mic. unlike other garbage mods it
 
 stuff it does
 720p 30fps (nvenc/hardware)
-
-why
-because i'm tired of laggy recorders. suffering has begun.
-please report all bugs in the github. 

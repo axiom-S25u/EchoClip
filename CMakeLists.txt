@@ -29,6 +29,7 @@ setup_geode_mod(${PROJECT_NAME})
 target_link_libraries(${PROJECT_NAME}
     geode-sdk
     ole32
+    dxgi
 )
 
 file(GLOB PNG_RESOURCES CONFIGURE_DEPENDS
