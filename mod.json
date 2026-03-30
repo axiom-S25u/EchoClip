@@ -5,7 +5,7 @@
     },
     "id": "axiom.echoclip",
     "name": "EchoClip",
-    "version": "v1.1.0",
+    "version": "v1.1.1",
     "developer": "Axiom",
     "description": "record and save clips of your gameplay locally.",
     "links": {
@@ -19,8 +19,8 @@
         ]
     },
     "dependencies": {
-        "eclipse.ffmpeg-api": ">=v2.0.0"
-
+        "eclipse.ffmpeg-api": ">=v2.0.0",
+        "geode.custom-keybinds": ">=v2.0.0"
     },
     "settings": {
         "enabled": {

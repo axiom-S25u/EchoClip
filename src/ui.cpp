@@ -2,23 +2,23 @@
 #include <Geode/Geode.hpp>
 #include <Geode/cocos/extensions/GUI/CCScrollView/CCScrollView.h>
 #include <Geode/ui/GeodeUI.hpp>
+#include <Geode/utils/general.hpp>
 #include <filesystem>
 #include <algorithm>
 #include <chrono>
 
+#ifdef GEODE_IS_WINDOWS
+#include <shellapi.h>
+#endif
+// please help with the ui if u can, i did my best :sob:
 using namespace geode::prelude;
 namespace fs = std::filesystem;
 
 std::string format_time_str(fs::file_time_type ft) {
-    auto tp = std::chrono::time_point_cast<std::chrono::system_clock::duration>(
+    auto system_tp = std::chrono::time_point_cast<std::chrono::system_clock::duration>(
         ft - fs::file_time_type::clock::now() + std::chrono::system_clock::now()
     );
-    std::time_t t_val = std::chrono::system_clock::to_time_t(tp);
-    char buffer_time[32]; 
-    tm time_info_ptr; 
-    localtime_s(&time_info_ptr, &t_val); 
-    strftime(buffer_time, sizeof(buffer_time), "%m/%d %H:%M", &time_info_ptr);
-    return std::string(buffer_time);
+    return geode::utils::timePointAsString(system_tp);
 }
 
 Card* Card::create(Clip data, float width_val, float height_val) {
@@ -82,8 +82,9 @@ bool Card::init(Clip data_info, float w, float h) {
 }
 
 void Card::onPlay(CCObject*) {
-    std::string s_cmd_str = "start \"\" \"" + m_info_struct.p_path.string() + "\""; 
-    system(s_cmd_str.c_str()); 
+#ifdef GEODE_IS_WINDOWS
+    ShellExecuteA(NULL, "open", m_info_struct.p_path.string().c_str(), NULL, NULL, SW_SHOWNORMAL);
+#endif
 }
 
 void Card::onDelete(CCObject*) {
@@ -109,19 +110,19 @@ Gallery* Gallery::create() {
 void Gallery::open() {
     auto s_cur_scene = CCDirector::get()->getRunningScene(); 
     if (!s_cur_scene) return;
-    if (CCNode* node_found = s_cur_scene->getChildByID("echoclip-gallery")) { 
+    if (CCNode* node_found = s_cur_scene->getChildByID("axiom.echoclip/gallery")) { 
         node_found->removeFromParent(); 
         return; 
     }
     auto p_gal_layer = create(); 
-    p_gal_layer->setID("echoclip-gallery"); 
-    s_cur_scene->addChild(p_gal_layer, 9999);
+    p_gal_layer->setID("axiom.echoclip/gallery"); 
+    s_cur_scene->addChild(p_gal_layer, s_cur_scene->getHighestChildZ() + 1);
 }
 
 void Gallery::refresh() {
     auto p_scene_ptr = CCDirector::get()->getRunningScene(); 
     if (!p_scene_ptr) return;
-    Gallery* p_g = typeinfo_cast<Gallery*>(p_scene_ptr->getChildByID("echoclip-gallery"));
+    Gallery* p_g = typeinfo_cast<Gallery*>(p_scene_ptr->getChildByID("axiom.echoclip/gallery"));
     if (p_g) { 
         p_g->load(); 
         p_g->v_filtered_list = p_g->v_all_clips; 
@@ -271,11 +272,12 @@ void Gallery::build() {
 
 void Gallery::load() {
     v_all_clips.clear(); 
+    std::error_code ec;
     fs::path d_path_obj = Mod::get()->getSaveDir() / "clips"; 
-    if (!fs::exists(d_path_obj)) return;
+    if (!fs::exists(d_path_obj, ec)) return;
     
-    for (auto& entry_ptr : fs::directory_iterator(d_path_obj)) {
-        if (!entry_ptr.is_regular_file() || (entry_ptr.path().extension() != ".mkv" && entry_ptr.path().extension() != ".mp4")) continue;
+    for (auto& entry_ptr : fs::directory_iterator(d_path_obj, ec)) {
+        if (!entry_ptr.is_regular_file(ec) || (entry_ptr.path().extension() != ".mkv" && entry_ptr.path().extension() != ".mp4")) continue;
         std::string s_name_stem = entry_ptr.path().stem().string(); 
         Clip c_info; 
         c_info.p_path = entry_ptr.path(); 
@@ -292,24 +294,17 @@ void Gallery::load() {
             for (size_t j = 0; j < s_final_num.size(); j++) if (!isdigit(s_final_num[j])) { is_digit_ok = false; break; }
             if (is_digit_ok && !s_final_num.empty()) c_info.nAtts = std::stoi(s_final_num);
         }
-        c_info.s_time_info = format_time_str(fs::last_write_time(entry_ptr.path())); 
+        c_info.s_time_info = format_time_str(fs::last_write_time(entry_ptr.path(), ec)); 
         v_all_clips.push_back(c_info);
     }
     std::sort(v_all_clips.begin(), v_all_clips.end(), [](Clip& a, Clip& b) { 
-        return fs::last_write_time(a.p_path) > fs::last_write_time(b.p_path); 
+        std::error_code ec1, ec2;
+        return fs::last_write_time(a.p_path, ec1) > fs::last_write_time(b.p_path, ec2); 
     });
 }
 
 void Gallery::onFolder(CCObject*) {
-    auto path_str_val = (Mod::get()->getSaveDir() / "clips").string();
-    std::thread([path_str_val]() {
-        STARTUPINFOA si_ptr = { sizeof(si_ptr) }; PROCESS_INFORMATION pi_ptr; 
-        std::string cmd_to_run = "explorer \"" + path_str_val + "\"";
-        if (CreateProcessA(NULL, (char*)cmd_to_run.c_str(), NULL, NULL, FALSE, 0, NULL, NULL, &si_ptr, &pi_ptr)) { 
-            CloseHandle(pi_ptr.hProcess); 
-            CloseHandle(pi_ptr.hThread); 
-        }
-    }).detach();
+    geode::utils::file::openFolder(Mod::get()->getSaveDir() / "clips");
 }
 
 void Gallery::onSettings(CCObject*) { geode::openSettingsPopup(Mod::get()); }
@@ -323,8 +318,9 @@ void Gallery::onRefresh(CCObject* p_unused) {
 void Gallery::onClear(CCObject*) {
     geode::createQuickPopup("Clear All", "Delete all clips?\nThis can't be undone.", "No", "Yes", [this](auto, bool b_sure) { // sorry if ui is shit i did my best
         if (b_sure) { 
-            fs::remove_all(Mod::get()->getSaveDir() / "clips"); 
-            fs::create_directories(Mod::get()->getSaveDir() / "clips"); 
+            std::error_code ec;
+            fs::remove_all(Mod::get()->getSaveDir() / "clips", ec); 
+            fs::create_directories(Mod::get()->getSaveDir() / "clips", ec); 
             onRefresh(nullptr); 
         } 
     });

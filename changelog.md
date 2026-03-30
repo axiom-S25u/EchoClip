@@ -1,3 +1,6 @@
+v1.1.1
+added hardware warnings (tells you if your cpu/gpu is basically a potato)
+lowered vram warning threshold to 2GB because 6GB was overkill lol
 
 v1.1.0
 optimised it

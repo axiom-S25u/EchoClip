@@ -20,7 +20,7 @@ class $modify(MenuHook, MenuLayer) {
         s->setScale(0.5f);
 
         auto btn = CCMenuItemSpriteExtra::create(s, this, menu_selector(MenuHook::onGallery));
-        btn->setID("echoclip-gallery-btn");
+        btn->setID("axiom.echoclip/gallery-btn");
         menu->addChild(btn);
         menu->updateLayout();
 
