@@ -5,7 +5,7 @@
     },
     "id": "axiom.echoclip",
     "name": "EchoClip",
-    "version": "v1.1.1",
+    "version": "v1.1.1111111111111111111111111111111111",
     "developer": "Axiom",
     "description": "record and save clips of your gameplay locally.",
     "links": {
@@ -19,8 +19,7 @@
         ]
     },
     "dependencies": {
-        "eclipse.ffmpeg-api": ">=v2.0.0",
-        "geode.custom-keybinds": ">=v2.0.0"
+        "eclipse.ffmpeg-api": ">=v2.0.0"
     },
     "settings": {
         "enabled": {
@@ -88,6 +87,18 @@
             "description": "automatically save a clip when you hit a new best percent",
             "type": "bool",
             "default": false
+        },
+        "auto-performance": {
+            "name": "Auto Performance Mode",
+            "description": "automatically lower settings if your PC is struggling or has bad specs.",
+            "type": "bool",
+            "default": true
+        },
+        "april-fools": {
+            "name": "Enable Seasonal Events",
+            "description": "Enables fun surprises on specific days (like April 1st).",
+            "type": "bool",
+            "default": true
         }
     }
 }
