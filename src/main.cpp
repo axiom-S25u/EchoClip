@@ -10,6 +10,10 @@
 #include <queue>
 #include <mutex>
 #include <condition_variable>
+#include <chrono>
+#include <thread>
+#include <cstdlib>
+#include <ctime>
 
 #ifdef GEODE_IS_WINDOWS
 #define WIN32_LEAN_AND_MEAN
@@ -43,24 +47,25 @@ bool check_cpu_bad() {
     return std::thread::hardware_concurrency() < 4; // bro if u have < 4 cores in 2026 just give up
 }
 
-std::string get_codec(bool hevc = false) { // if 1 PERSON SAYS "android when" im banning them from my server
-    // this is NEVER comming to other platforms.. maybe
+std::string get_codec() { // if 1 PERSON SAYS "android when" im banning them from my server
+    // this is NEVER comming to other platforms.. maybe, ok but the only one thta could maybe work is mocos
+    static std::string cached_codec = "";
+    if (!cached_codec.empty()) return cached_codec;
     char* sz_vendor_ptr = (char*)glGetString(GL_VENDOR);
-    if (!sz_vendor_ptr) return hevc ? "libx265" : "libx264";
+    if (!sz_vendor_ptr) return "libx264";
     std::string vStr = geode::utils::string::toLower(sz_vendor_ptr);
-    
-    if (vStr.find("nvidia") != std::string::npos) return hevc ? "hevc_nvenc" : "h264_nvenc";
-    if (vStr.find("amd") != std::string::npos || vStr.find("ati") != std::string::npos || vStr.find("advanced micro") != std::string::npos) return hevc ? "hevc_amf" : "h264_amf";
-    if (vStr.find("intel") != std::string::npos) return hevc ? "hevc_qsv" : "h264_qsv";
-    
-    return hevc ? "libx265" : "libx264";
+    if (vStr.find("nvidia") != std::string::npos) cached_codec = "h264_nvenc";
+    else if (vStr.find("amd") != std::string::npos || vStr.find("ati") != std::string::npos || vStr.find("advanced micro") != std::string::npos) cached_codec = "h264_amf";
+    else if (vStr.find("intel") != std::string::npos) cached_codec = "h264_qsv";
+    else cached_codec = "libx264";
+    return cached_codec;
 }
 
 // u know what, thank god gd uses opengl vulkan would be hell
-void save_clip(fs::path srcPath, std::string sLvlName, int nAttempts, double startTime = 0) {
+void save_clip(fs::path srcPath, std::string sLvlName, int nAttempts) {
     std::error_code ec;
     if (srcPath.empty() || !fs::exists(srcPath, ec)) return;
-    geode::async::spawn([srcPath, sLvlName, nAttempts, startTime]() -> arc::Future<> {
+    geode::async::spawn([srcPath, sLvlName, nAttempts]() -> arc::Future<> {
         std::error_code ec;
         fs::path p_save_dir = Mod::get()->getSaveDir() / "clips";
         fs::create_directories(p_save_dir, ec);
@@ -72,27 +77,16 @@ void save_clip(fs::path srcPath, std::string sLvlName, int nAttempts, double sta
         fs::path out_file_path = p_save_dir / fmt::format("{}_att{}_{}.mp4", clean_name, nAttempts, (long long)::time(0));
         fs::path tmp_out = p_save_dir / fmt::format("_tmp_{}.mp4", (long long)::time(0));
         
-        std::string codec = get_codec(true);
-        std::string flags = "-preset ultrafast -crf 23";
-        
-        if (codec.find("nvenc") != std::string::npos) flags = "-preset fast -rc vbr -cq 23";
-        else if (codec.find("amf") != std::string::npos) flags = "-quality speed -rc vbr_latency";
-        else if (codec.find("qsv") != std::string::npos) flags = "-preset veryfast -global_quality 23";
-        else if (codec == "libx265") flags = "-preset ultrafast -crf 23";
+        std::string codec = get_codec();
+        std::string ff_cmd = fmt::format("ffmpeg -y -i \"{}\" -vf null -c:v {} -preset ultrafast -crf 23 -pix_fmt yuv420p -movflags +faststart \"{}\"", 
+            srcPath.string(), codec, tmp_out.string());
 
-        std::string s_src_path = geode::utils::string::pathToString(srcPath);
-        std::string s_tmp_out = geode::utils::string::pathToString(tmp_out);
-
-        std::string ff_cmd = fmt::format("ffmpeg -y -i \"{}\" -ss {:.3f} -c:v {} {} -pix_fmt yuv420p -movflags +faststart \"{}\"",
-            s_src_path, std::max(0.0, startTime), codec, flags, s_tmp_out);
-            
         STARTUPINFOA si = { sizeof(si) };
         PROCESS_INFORMATION pi = {};
         if (CreateProcessA(NULL, (char*)ff_cmd.c_str(), NULL, NULL, FALSE, CREATE_NO_WINDOW, NULL, NULL, &si, &pi)) {
             WaitForSingleObject(pi.hProcess, INFINITE);
             CloseHandle(pi.hProcess); CloseHandle(pi.hThread);
         }
-
         if (fs::exists(tmp_out, ec)) {
             fs::remove(srcPath, ec); fs::rename(tmp_out, out_file_path, ec);
         } else {
@@ -104,8 +98,8 @@ void save_clip(fs::path srcPath, std::string sLvlName, int nAttempts, double sta
         for (auto const& e : fs::directory_iterator(p_save_dir, ec))
             if (e.path().extension() == ".mp4" || e.path().extension() == ".mkv") vFiles.push_back(e.path());
         std::sort(vFiles.begin(), vFiles.end(), [](fs::path a, fs::path b) { 
-            std::error_code ec1, ec2;
-            return fs::last_write_time(a, ec1) < fs::last_write_time(b, ec2); 
+            std::error_code e1, e2;
+            return fs::last_write_time(a, e1) < fs::last_write_time(b, e2); 
         });
         uintmax_t nTotal = 0;
         for (auto const& f : vFiles) {
@@ -147,8 +141,6 @@ class $modify(MyBaseGameLayer, GJBaseGameLayer) {
 
         float gap_cache = 0.01666f;
         bool clip_new_best = false;
-        double total_time = 0;
-        std::deque<double> attempt_starts;
 
         std::thread* p_worker_thread = nullptr;
         std::queue<std::vector<uint8_t>> c_pixel_q;
@@ -171,18 +163,11 @@ class $modify(MyBaseGameLayer, GJBaseGameLayer) {
     void trigger_clip() {
         Fields* f = m_fields.self();
         if (f->active) {
-            size_t n = (size_t)Mod::get()->getSettingValue<int64_t>("att-clip-count");
-            double startTime = 0;
-            size_t actual_n = n;
-            if (f->total_time - f->attempt_starts.back() < 2.0 && f->attempt_starts.size() > 1) actual_n++;
-            if (f->attempt_starts.size() >= actual_n) startTime = f->attempt_starts[f->attempt_starts.size() - actual_n];
-            else if (!f->attempt_starts.empty()) startTime = f->attempt_starts.front();
-
             fs::path p = kill_rec();
             std::error_code ec;
             if (!p.empty() && fs::exists(p, ec)) {
                 Notification::create("Clipping...", CCSprite::createWithSpriteFrameName("GJ_completesIcon_001.png"))->show();
-                save_clip(p, f->s_lvl_str, f->n_att_count, startTime);
+                save_clip(p, f->s_lvl_str, f->n_att_count);
                 auto frameSize = CCDirector::get()->getOpenGLView()->getFrameSize();
                 start_rec((int)frameSize.width, (int)frameSize.height);
             }
@@ -191,36 +176,12 @@ class $modify(MyBaseGameLayer, GJBaseGameLayer) {
 
     void start_rec(int srcW, int srcH) {
         kill_rec();
-        bool auto_perf = Mod::get()->getSettingValue<bool>("auto-performance");
-        int64_t scale_val = Mod::get()->getSettingValue<int64_t>("recording-scale");
-        int64_t fps_val = Mod::get()->getSettingValue<int64_t>("target-fps");
-        int64_t bitrate_val = Mod::get()->getSettingValue<int64_t>("bitrate");
-        std::string codec_str = get_codec(false);
-
-        if (auto_perf) {
-            if (check_vram_low()) {
-                scale_val = std::min(scale_val, (int64_t)50);
-                Notification::create("Low VRAM: Scaling to 50%", CCSprite::createWithSpriteFrameName("GJ_infoIcon_001.png"))->show();
-            }
-            if (check_cpu_bad()) {
-                fps_val = std::min(fps_val, (int64_t)30);
-                Notification::create("Bad CPU: Capping to 30 FPS", CCSprite::createWithSpriteFrameName("GJ_infoIcon_001.png"))->show();
-            }
-            if (codec_str == "libx264") {
-                bitrate_val = std::min(bitrate_val, (int64_t)8);
-                Notification::create("No GPU Encoder: Lowering Bitrate", CCSprite::createWithSpriteFrameName("GJ_infoIcon_001.png"))->show();
-            }
-        }
-
-        int w_res = (srcW * (int)scale_val / 100) & ~1;
-        int h_res = (srcH * (int)scale_val / 100) & ~1;
+        int scale = (int)std::min((int64_t)100, Mod::get()->getSettingValue<int64_t>("recording-scale"));
+        int w_res = (srcW * scale / 100) & ~1;
+        int h_res = (srcH * scale / 100) & ~1;
         int sz_bytes = w_res * h_res * 4;
         
-        m_fields->total_time = 0;
-        m_fields->f_timer_val = 0;
-        m_fields->attempt_starts.clear();
-        m_fields->attempt_starts.push_back(0);
-        m_fields->gap_cache = 1.f / (float)fps_val;
+        m_fields->gap_cache = 1.f / (float)Mod::get()->getSettingValue<int64_t>("target-fps");
         m_fields->clip_new_best = Mod::get()->getSettingValue<bool>("clip-on-new-best");
 
         std::error_code ec;
@@ -230,10 +191,10 @@ class $modify(MyBaseGameLayer, GJBaseGameLayer) {
 
         ffmpeg::RenderSettings config;
         config.m_height = h_res; config.m_width = w_res;
-        config.m_fps = (uint16_t)fps_val;
-        config.m_bitrate = bitrate_val * 1000000;
+        config.m_fps = (uint16_t)Mod::get()->getSettingValue<int64_t>("target-fps");
+        config.m_bitrate = std::min((int64_t)8000000, Mod::get()->getSettingValue<int64_t>("bitrate") * 1000000);
         config.m_outputFile = m_fields->temp_file_p;
-        config.m_codec = codec_str; 
+        config.m_codec = get_codec();
         config.m_pixelFormat = ffmpeg::PixelFormat::BGRA;
         config.m_doVerticalFlip = true;
 
@@ -309,6 +270,20 @@ class $modify(MyBaseGameLayer, GJBaseGameLayer) {
         m_fields->b_setup_done = false;
     }
 
+    void update(float dt) {
+        GJBaseGameLayer::update(dt);
+        Fields* f = m_fields.self();
+        if (!f->active) return;
+        
+        f->f_timer_val += dt;
+        if (f->f_timer_val >= f->gap_cache) {
+            f->f_timer_val = fmodf(f->f_timer_val, f->gap_cache);
+            f->b_capture_this_frame = true;
+            std::lock_guard<std::mutex> l(f->m_q_mtx);
+            if (f->c_pixel_q.size() > 8) f->b_capture_this_frame = false;
+        }
+    }
+
     void onExit() { kill_rec(); cleanup_gl(); GJBaseGameLayer::onExit(); }
 };
 
@@ -316,7 +291,9 @@ $execute {
     listenForKeybindSettingPresses("clip-keybind", [](geode::Keybind const&, bool down, bool repeat, double) {
         if (down && !repeat) {
             if (Mod::get()->getSettingValue<bool>("enabled")) {
-                if (auto layer = GJBaseGameLayer::get()) static_cast<MyBaseGameLayer*>(layer)->trigger_clip();
+                if (auto layer = GJBaseGameLayer::get()) {
+                    static_cast<MyBaseGameLayer*>(layer)->trigger_clip();
+                }
             }
         }
     });
@@ -331,6 +308,7 @@ class $modify(MyCCEGLView, CCEGLView) {
                 f->b_capture_this_frame = false;
                 int recW = f->nW; int recH = f->nH;
                 int sz_bytes = recW * recH * 4;
+                
                 auto fs = CCDirector::get()->getOpenGLView()->getFrameSize();
                 int winW = (int)fs.width; int winH = (int)fs.height;
 
@@ -350,7 +328,9 @@ class $modify(MyCCEGLView, CCEGLView) {
                     glBindFramebuffer(GL_DRAW_FRAMEBUFFER, f->downscale_fbo);
                     glBlitFramebuffer(0, 0, winW, winH, 0, 0, recW, recH, GL_COLOR_BUFFER_BIT, GL_LINEAR);
                     glBindFramebuffer(GL_READ_FRAMEBUFFER, f->downscale_fbo);
-                } else glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
+                } else {
+                    glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
+                }
 
                 int writeIdx = f->write_idx;
                 int readIdx = (writeIdx + 1) % 3;
@@ -377,6 +357,7 @@ class $modify(MyCCEGLView, CCEGLView) {
                             if (c_pixel.size() != (size_t)sz_bytes) c_pixel.resize(sz_bytes);
                             memcpy(c_pixel.data(), p_pix, sz_bytes);
                             glUnmapBuffer(GL_PIXEL_PACK_BUFFER);
+                            
                             std::lock_guard<std::mutex> l(f->m_q_mtx);
                             if (f->c_pixel_q.size() < 12) { f->c_pixel_q.push(std::move(c_pixel)); f->m_cv.notify_one(); }
                             else {
@@ -395,20 +376,6 @@ class $modify(MyCCEGLView, CCEGLView) {
 };
 
 class $modify(MyPlayLayer, PlayLayer) {
-    void update(float dt) {
-        PlayLayer::update(dt);
-        auto f = static_cast<MyBaseGameLayer*>(static_cast<GJBaseGameLayer*>(this))->m_fields.self();
-        if (f && f->active) {
-            f->total_time += static_cast<double>(dt);
-            f->f_timer_val += dt;
-            if (f->f_timer_val >= f->gap_cache) {
-                f->f_timer_val = fmodf(f->f_timer_val, f->gap_cache);
-                f->b_capture_this_frame = true;
-                std::lock_guard<std::mutex> l(f->m_q_mtx);
-                if (f->c_pixel_q.size() > 6) f->b_capture_this_frame = false;
-            }
-        }
-    }
     void startGame() {
         PlayLayer::startGame(); if (!Mod::get()->getSettingValue<bool>("enabled") || !m_level) return;
         
@@ -424,42 +391,29 @@ class $modify(MyPlayLayer, PlayLayer) {
                 Notification::create("No GPU Encoder! CPU usage will be high.", CCSprite::createWithSpriteFrameName("GJ_infoIcon_001.png"), 5.f)->show();
                 s_warned = true;
             }
-        } // i procrastinated doing this for like all day
+        } 
 
         MyBaseGameLayer::Fields* f = static_cast<MyBaseGameLayer*>(static_cast<GJBaseGameLayer*>(this))->m_fields.self();
         f->s_lvl_str = m_level->m_levelName; f->n_att_count = m_level->m_attempts; f->best_percent = m_level->m_normalPercent;
         auto frameSize = CCDirector::get()->getOpenGLView()->getFrameSize();
         static_cast<MyBaseGameLayer*>(static_cast<GJBaseGameLayer*>(this))->start_rec((int)frameSize.width, (int)frameSize.height);
     }
-    void resetLevel() { 
-        PlayLayer::resetLevel(); 
-        if (auto f = static_cast<MyBaseGameLayer*>(static_cast<GJBaseGameLayer*>(this))->m_fields.self()) {
-            f->n_att_count = m_level ? m_level->m_attempts : 0; 
-            f->attempt_starts.push_back(f->total_time);
-            size_t n = (size_t)Mod::get()->getSettingValue<int64_t>("att-clip-count");
-            if (f->attempt_starts.size() > n + 5) f->attempt_starts.pop_front();
-        }
-    }
+    void resetLevel() { PlayLayer::resetLevel(); if (auto f = static_cast<MyBaseGameLayer*>(static_cast<GJBaseGameLayer*>(this))->m_fields.self()) f->n_att_count = m_level ? m_level->m_attempts : 0; }
     void levelComplete() {
-        bool bad = m_isPracticeMode || m_isTestMode;
         PlayLayer::levelComplete();
         auto f = static_cast<MyBaseGameLayer*>(static_cast<GJBaseGameLayer*>(this))->m_fields.self();
-        if (!f || !f->clip_new_best || !m_level || bad) return;
+        if (!f || !f->clip_new_best || !m_level) return;
         if (m_level->m_normalPercent <= f->best_percent) return;
         f->best_percent = m_level->m_normalPercent;
-        double startTime = f->attempt_starts.empty() ? 0 : f->attempt_starts.back();
         fs::path p = static_cast<MyBaseGameLayer*>(static_cast<GJBaseGameLayer*>(this))->kill_rec();
-        if (!p.empty()) { save_clip(p, f->s_lvl_str, f->n_att_count, startTime); auto fs = CCDirector::get()->getOpenGLView()->getFrameSize(); static_cast<MyBaseGameLayer*>(static_cast<GJBaseGameLayer*>(this))->start_rec((int)fs.width, (int)fs.height); }
+        if (!p.empty()) { save_clip(p, f->s_lvl_str, f->n_att_count); auto fs = CCDirector::get()->getOpenGLView()->getFrameSize(); static_cast<MyBaseGameLayer*>(static_cast<GJBaseGameLayer*>(this))->start_rec((int)fs.width, (int)fs.height); }
     }
     void destroyPlayer(PlayerObject* boi, GameObject* obj) {
-        bool bad = m_isPracticeMode || m_isTestMode;
         PlayLayer::destroyPlayer(boi, obj);
         auto f = static_cast<MyBaseGameLayer*>(static_cast<GJBaseGameLayer*>(this))->m_fields.self();
-        if (!f || !f->clip_new_best || !m_player1 || !m_level || bad) return;
+        if (!f || !f->clip_new_best || !m_player1 || !m_level) return;
         int cur = (int)(m_player1->getPositionX() / m_levelLength * 100.f); if (cur <= f->best_percent) return;
-        f->best_percent = cur; 
-        double startTime = f->attempt_starts.empty() ? 0 : f->attempt_starts.back();
-        fs::path p = static_cast<MyBaseGameLayer*>(static_cast<GJBaseGameLayer*>(this))->kill_rec();
-        if (!p.empty()) { save_clip(p, f->s_lvl_str, f->n_att_count, startTime); auto fs = CCDirector::get()->getOpenGLView()->getFrameSize(); static_cast<MyBaseGameLayer*>(static_cast<GJBaseGameLayer*>(this))->start_rec((int)fs.width, (int)fs.height); }
+        f->best_percent = cur; fs::path p = static_cast<MyBaseGameLayer*>(static_cast<GJBaseGameLayer*>(this))->kill_rec();
+        if (!p.empty()) { save_clip(p, f->s_lvl_str, f->n_att_count); auto fs = CCDirector::get()->getOpenGLView()->getFrameSize(); static_cast<MyBaseGameLayer*>(static_cast<GJBaseGameLayer*>(this))->start_rec((int)fs.width, (int)fs.height); }
     }
 };

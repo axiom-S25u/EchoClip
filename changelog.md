@@ -1,4 +1,8 @@
-v1.1.1111111111111111111111111
+v1.1.3
+fixed recording issue lmao
+*thats IT*
+
+v1.1.222222222222222222
 fixed bugs
 added watermark
 
