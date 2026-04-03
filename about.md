@@ -1,4 +1,5 @@
-about echoclip
-echoclip is a background recorder for geometry dash that actually works without killing your pc. most recorders use raw frame buffers that eat like 70gb of ram, but this pipes encoded video straight to your disk instead.
+<cy>echoclip</c> records your gameplay in the <cg>background</cg> so you can save clips without <cr>lagging</cr> your game
 
-written by axiom because i needed a clipper that didn't crash on xl levels.
+unlike other garbage mods, this one won't <cr>eat your ram</c> or crash your pc. it just <cb>works</cb>
+
+written by <cy>axiom</c> because i was bored and needed a clipper lmao

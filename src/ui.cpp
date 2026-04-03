@@ -292,7 +292,7 @@ void Gallery::load() {
             std::string s_final_num = (idx_u != std::string::npos) ? s_num_rest.substr(0, idx_u) : s_num_rest;
             bool is_digit_ok = true; 
             for (size_t j = 0; j < s_final_num.size(); j++) if (!isdigit(s_final_num[j])) { is_digit_ok = false; break; }
-            if (is_digit_ok && !s_final_num.empty()) c_info.nAtts = std::stoi(s_final_num);
+            if (is_digit_ok && !s_final_num.empty()) c_info.nAtts = std::atoi(s_final_num.c_str());
         }
         c_info.s_time_info = format_time_str(fs::last_write_time(entry_ptr.path(), ec)); 
         v_all_clips.push_back(c_info);

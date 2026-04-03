@@ -1,4 +1,8 @@
-v1.1.3
+<cy>v1.2.0</c>
+<cg>added auto performance</c>
+<cr>fixed std::stoi</c> to prevent potential crashes
+
+<cy>v1.1.3</c>
 fixed recording issue lmao
 *thats IT*
 

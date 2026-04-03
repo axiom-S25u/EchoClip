@@ -1,5 +1,8 @@
+#define _CRT_SECURE_NO_WARNINGS
 #include "watermark.hpp"
+#include <Geode/ui/OverlayManager.hpp>
 #include <ctime>
+using namespace geode::prelude;
 
 bool Watermark::init() {
     if (!CCNode::init()) return false;
@@ -38,12 +41,17 @@ void Watermark::checkAndShow(CCNode* layer) {
 
     std::time_t t = std::time(nullptr);
     std::tm* now = std::localtime(&t);
+    if (!now) return;
 
     if (now->tm_mon == 3 && now->tm_mday == 1) {
-        if (layer && !layer->getChildByID("axiom.echoclip/watermark")) {
+        if (!geode::OverlayManager::get()->getChildByID("axiom.echoclip/watermark")) {
             auto wm = Watermark::create();
             wm->setID("axiom.echoclip/watermark");
-            layer->addChild(wm, 999999);
+            geode::OverlayManager::get()->addChild(wm);
+        }
+    } else {
+        if (auto wm = geode::OverlayManager::get()->getChildByID("axiom.echoclip/watermark")) {
+            wm->removeFromParent();
         }
     }
 }

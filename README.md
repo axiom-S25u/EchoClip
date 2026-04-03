@@ -1,7 +1,14 @@
-EchoClip
-background recorder for gd.
+# EchoClip
+background recorder for GD that actually <cg>works</cg>.
 
-records your last 5 attempts and mixes in your mic. unlike other garbage mods it pipes straight to disk so your ram doesn't die.
+### why use this?
+*   **no lag:** uses your gpu to do the heavy lifting.
+*   **no ram bloat:** saves video straight to your disk.
+*   **mic support:** actually records your voice so people can hear you yell at the game.
 
-stuff it does
-720p 30fps (nvenc/hardware)
+### stuff it has
+*   720p 30fps, and more (good enough so u can send ur things on discord)
+*   **auto performance:** lowers settings if your pc is a potato
+*   **clipping:** hit F6 to save your last few attempts
+
+just install it and stop using OBS for every single attempt
