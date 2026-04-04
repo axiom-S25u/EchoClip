@@ -2,7 +2,9 @@
 #include <Geode/loader/SettingV3.hpp>
 #include <Geode/modify/GJBaseGameLayer.hpp>
 #include <Geode/modify/PlayLayer.hpp>
+#include <Geode/modify/LevelEditorLayer.hpp>
 #include <Geode/modify/CCEGLView.hpp>
+#include <Geode/modify/PauseLayer.hpp>
 #include <eclipse.ffmpeg-api/include/events.hpp>
 #include <Geode/utils/async.hpp>
 #include <Geode/utils/string.hpp>
@@ -26,7 +28,7 @@ using namespace geode::prelude;
 namespace fs = std::filesystem;
 
 // axiom was here
-// i hate this project so much why did i start this
+// i hate this project so much why did i start this, at least it has features now
 double get_time_val() {
     return std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
 }
@@ -38,7 +40,7 @@ bool check_vram_low() { // i know someonme will complain about low fps so i adde
         IDXGIFactory* f; if (FAILED(CreateDXGIFactory(__uuidof(IDXGIFactory), (void**)&f))) return false;
         IDXGIAdapter* a; if (FAILED(f->EnumAdapters(0, &a))) { f->Release(); return false; }
         DXGI_ADAPTER_DESC d; a->GetDesc(&d);
-        vram_mb = d.DedicatedVideoMemory / (1024 * 1024);
+        vram_mb = (int)(d.DedicatedVideoMemory / (1024 * 1024));
         a->Release(); f->Release();
     }
     return vram_mb < 2048; // lowered this because 6gb was crazy lol, wait but if someone is on an igpu, dont they have like 256mb or smh? meh not my problem
@@ -71,15 +73,18 @@ void save_clip(fs::path srcPath, std::string sLvlName, int nAttempts, double sta
     if (srcPath.empty() || !fs::exists(srcPath, ec)) return;
     geode::async::spawn([srcPath, sLvlName, nAttempts, startOffset]() -> arc::Future<> {
         std::error_code ec;
-        fs::path p_save_dir = Mod::get()->getSaveDir() / "clips";
-        fs::create_directories(p_save_dir, ec);
+        fs::path p_root_clips = Mod::get()->getSaveDir() / "clips";
+        
         std::string clean_name = sLvlName;
         for (char& c : clean_name)
             if (c == '/' || c == '\\' || c == ':' || c == '*' || c == '?' || c == '"' || c == '<' || c == '>' || c == '|') c = '_';
         if (clean_name.size() > 40) clean_name = clean_name.substr(0, 40);
 
-        fs::path out_file_path = p_save_dir / fmt::format("{}_att{}_{}.mp4", clean_name, nAttempts, (long long)::time(0));
-        fs::path tmp_out = p_save_dir / fmt::format("_tmp_{}.mp4", (long long)::time(0));
+        fs::path p_lvl_dir = p_root_clips / clean_name;
+        fs::create_directories(p_lvl_dir, ec);
+
+        fs::path out_file_path = p_lvl_dir / fmt::format("{}_att{}_{}.mp4", clean_name, nAttempts, (long long)::time(0));
+        fs::path tmp_out = p_lvl_dir / fmt::format("_tmp_{}.mp4", (long long)::time(0));
         
         std::string codec = get_codec();
         std::string ff_bin;
@@ -92,13 +97,14 @@ void save_clip(fs::path srcPath, std::string sLvlName, int nAttempts, double sta
         if (ff_bin.empty()) {
             fs::rename(srcPath, out_file_path, ec);
         } else {
+            std::string metadata = fmt::format("-metadata title=\"{}\" -metadata comment=\"Attempts: {}\" -metadata author=\"EchoClip\"", sLvlName, nAttempts);
             std::string ff_cmd;
             if (startOffset > 0.01) {
-                ff_cmd = fmt::format("{} -y -ss {:.3f} -i \"{}\" -vf null -c:v {} -preset ultrafast -crf 23 -pix_fmt yuv420p -movflags +faststart \"{}\"",
-                    ff_bin, startOffset, srcPath.string(), codec, tmp_out.string());
+                ff_cmd = fmt::format("{} -y -ss {:.3f} -i \"{}\" {} -vf null -c:v {} -preset ultrafast -crf 23 -pix_fmt yuv420p -movflags +faststart \"{}\"",
+                    ff_bin, startOffset, srcPath.string(), metadata, codec, tmp_out.string());
             } else {
-                ff_cmd = fmt::format("{} -y -i \"{}\" -vf null -c:v {} -preset ultrafast -crf 23 -pix_fmt yuv420p -movflags +faststart \"{}\"",
-                    ff_bin, srcPath.string(), codec, tmp_out.string());
+                ff_cmd = fmt::format("{} -y -i \"{}\" {} -vf null -c:v {} -preset ultrafast -crf 23 -pix_fmt yuv420p -movflags +faststart \"{}\"",
+                    ff_bin, srcPath.string(), metadata, codec, tmp_out.string());
             }
 
             STARTUPINFOA si = { sizeof(si) };
@@ -114,14 +120,32 @@ void save_clip(fs::path srcPath, std::string sLvlName, int nAttempts, double sta
             }
         }
 
+        int64_t max_days = Mod::get()->getSettingValue<int64_t>("cleanup-days");
         uintmax_t max_bytes = (uintmax_t)Mod::get()->getSettingValue<int64_t>("storage-limit") * 1024 * 1024 * 1024;
+        
         std::vector<fs::path> vFiles;
-        for (auto const& e : fs::directory_iterator(p_save_dir, ec))
-            if (e.path().extension() == ".mp4" || e.path().extension() == ".mkv") vFiles.push_back(e.path());
+        auto now_sys = std::chrono::system_clock::now();
+
+        for (auto const& dir_entry : fs::recursive_directory_iterator(p_root_clips, ec)) {
+            if (dir_entry.is_regular_file() && (dir_entry.path().extension() == ".mp4" || dir_entry.path().extension() == ".mkv")) {
+                if (max_days > 0) {
+                    auto ftime = fs::last_write_time(dir_entry.path(), ec);
+                    auto sclock = std::chrono::time_point_cast<std::chrono::system_clock::duration>(ftime - fs::file_time_type::clock::now() + std::chrono::system_clock::now());
+                    auto diff_hours = std::chrono::duration_cast<std::chrono::hours>(now_sys - sclock).count();
+                    if (diff_hours > max_days * 24) {
+                        fs::remove(dir_entry.path(), ec);
+                        continue;
+                    }
+                }
+                vFiles.push_back(dir_entry.path());
+            }
+        }
+
         std::sort(vFiles.begin(), vFiles.end(), [](fs::path a, fs::path b) { 
             std::error_code e1, e2;
             return fs::last_write_time(a, e1) < fs::last_write_time(b, e2); 
         });
+
         uintmax_t nTotal = 0;
         for (auto const& f : vFiles) {
             std::error_code e;
@@ -137,6 +161,50 @@ void save_clip(fs::path srcPath, std::string sLvlName, int nAttempts, double sta
             Notification::create("Clip Saved!", CCSprite::createWithSpriteFrameName("GJ_completesIcon_001.png"))->show();
             Gallery::refresh();
         });
+        co_return;
+    });
+}
+
+void cleanup_old_att_clips(std::string sLvlName, int nAttToKeep) {
+    geode::async::spawn([sLvlName, nAttToKeep]() -> arc::Future<> {
+        std::error_code ec;
+        fs::path p_root_clips = Mod::get()->getSaveDir() / "clips";
+        
+        std::string clean_name = sLvlName;
+        for (char& c : clean_name)
+            if (c == '/' || c == '\\' || c == ':' || c == '*' || c == '?' || c == '"' || c == '<' || c == '>' || c == '|') c = '_';
+        if (clean_name.size() > 40) clean_name = clean_name.substr(0, 40);
+
+        fs::path p_lvl_dir = p_root_clips / clean_name;
+        if (!fs::exists(p_lvl_dir, ec)) co_return;
+
+        std::vector<std::pair<fs::path, int>> v_clips;
+        for (auto const& entry : fs::directory_iterator(p_lvl_dir, ec)) {
+            if (entry.is_regular_file() && entry.path().extension() == ".mp4") {
+                std::string fname = entry.path().filename().string();
+                size_t att_pos = fname.find("_att");
+                if (att_pos != std::string::npos) {
+                    size_t start = att_pos + 4;
+                    size_t end = fname.find('_', start);
+                    if (end != std::string::npos) {
+                        std::string att_str = fname.substr(start, end - start);
+                        auto att_res = geode::utils::numFromString<int>(att_str);
+                        if (att_res) {
+                            v_clips.push_back({entry.path(), att_res.unwrap()});
+                        }
+                    }
+                }
+            }
+        }
+
+        std::sort(v_clips.begin(), v_clips.end(), [](auto const& a, auto const& b) {
+            return a.second > b.second;
+        });
+
+        for (size_t i = nAttToKeep; i < v_clips.size(); i++) {
+            fs::remove(v_clips[i].first, ec);
+        }
+
         co_return;
     });
 }
@@ -174,6 +242,7 @@ class $modify(MyBaseGameLayer, GJBaseGameLayer) {
 
         std::deque<double> attempt_offsets;
         double rec_start_time = 0;
+        int current_rec_att = 0;
 
         ~Fields() {
             dead = true; m_cv.notify_all();
@@ -193,7 +262,7 @@ class $modify(MyBaseGameLayer, GJBaseGameLayer) {
             std::error_code ec;
             if (!p.empty() && fs::exists(p, ec)) {
                 Notification::create("Clipping...", CCSprite::createWithSpriteFrameName("GJ_completesIcon_001.png"))->show();
-                save_clip(p, f->s_lvl_str, f->n_att_count, offset);
+                save_clip(p, f->s_lvl_str, f->current_rec_att, offset);
                 auto frameSize = CCDirector::get()->getOpenGLView()->getFrameSize();
                 start_rec((int)frameSize.width, (int)frameSize.height);
             }
@@ -238,6 +307,7 @@ class $modify(MyBaseGameLayer, GJBaseGameLayer) {
         m_fields->rec_start_time = get_time_val();
         m_fields->attempt_offsets.clear();
         m_fields->attempt_offsets.push_back(0);
+        m_fields->current_rec_att = m_fields->n_att_count;
 
         ffmpeg::RenderSettings config;
         config.m_height = h_res; config.m_width = w_res;
@@ -344,8 +414,6 @@ class $modify(MyBaseGameLayer, GJBaseGameLayer) {
             if (f->c_pixel_q.size() > 8) f->b_capture_this_frame = false;
         }
     }
-
-    void onExit() { kill_rec(); cleanup_gl(); GJBaseGameLayer::onExit(); }
 };
 
 $execute {
@@ -461,13 +529,29 @@ class $modify(MyPlayLayer, PlayLayer) {
     }
     void resetLevel() { 
         PlayLayer::resetLevel(); 
-        if (auto f = static_cast<MyBaseGameLayer*>(static_cast<GJBaseGameLayer*>(this))->m_fields.self()) {
-            f->n_att_count = m_level ? m_level->m_attempts : 0; 
-            if (f->active) {
-                f->attempt_offsets.push_back(get_time_val() - f->rec_start_time);
-                int max_att = (int)Mod::get()->getSettingValue<int64_t>("att-clip-count");
-                while (f->attempt_offsets.size() > max_att) {
-                    f->attempt_offsets.pop_front();
+        auto bgl = static_cast<MyBaseGameLayer*>(static_cast<GJBaseGameLayer*>(this));
+        auto f = bgl->m_fields.self();
+        if (!f) return;
+
+        f->n_att_count = m_level ? m_level->m_attempts : 0;
+        
+        if (f->active) {
+            int max_att = (int)Mod::get()->getSettingValue<int64_t>("att-clip-count");
+            
+            if (f->n_att_count > f->current_rec_att) {
+                if ((int)f->attempt_offsets.size() >= max_att) {
+                    double offset = f->attempt_offsets.empty() ? 0 : f->attempt_offsets.front();
+                    fs::path p = bgl->kill_rec();
+                    std::error_code ec;
+                    if (!p.empty() && fs::exists(p, ec)) {
+                        Notification::create("Clipping...", CCSprite::createWithSpriteFrameName("GJ_completesIcon_001.png"))->show();
+                        save_clip(p, f->s_lvl_str, f->current_rec_att, offset);
+                        cleanup_old_att_clips(f->s_lvl_str, max_att - 1);
+                        auto frameSize = CCDirector::get()->getOpenGLView()->getFrameSize();
+                        bgl->start_rec((int)frameSize.width, (int)frameSize.height);
+                    }
+                } else {
+                    f->attempt_offsets.push_back(get_time_val() - f->rec_start_time);
                 }
             }
         }
@@ -475,21 +559,48 @@ class $modify(MyPlayLayer, PlayLayer) {
     void levelComplete() {
         PlayLayer::levelComplete();
         auto f = static_cast<MyBaseGameLayer*>(static_cast<GJBaseGameLayer*>(this))->m_fields.self();
-        if (!f || !f->clip_new_best || !m_level) return;
-        if (m_level->m_normalPercent <= f->best_percent) return;
-        f->best_percent = m_level->m_normalPercent;
+        if (!f || !m_level) return;
         double offset = f->attempt_offsets.empty() ? 0 : f->attempt_offsets.front();
         fs::path p = static_cast<MyBaseGameLayer*>(static_cast<GJBaseGameLayer*>(this))->kill_rec();
-        if (!p.empty()) { save_clip(p, f->s_lvl_str, f->n_att_count, offset); auto fs = CCDirector::get()->getOpenGLView()->getFrameSize(); static_cast<MyBaseGameLayer*>(static_cast<GJBaseGameLayer*>(this))->start_rec((int)fs.width, (int)fs.height); }
+        if (!p.empty()) { save_clip(p, f->s_lvl_str, f->current_rec_att, offset); auto fs = CCDirector::get()->getOpenGLView()->getFrameSize(); static_cast<MyBaseGameLayer*>(static_cast<GJBaseGameLayer*>(this))->start_rec((int)fs.width, (int)fs.height); }
     }
     void destroyPlayer(PlayerObject* boi, GameObject* obj) {
         PlayLayer::destroyPlayer(boi, obj);
         auto f = static_cast<MyBaseGameLayer*>(static_cast<GJBaseGameLayer*>(this))->m_fields.self();
         if (!f || !f->clip_new_best || !m_player1 || !m_level) return;
-        int cur = (int)(m_player1->getPositionX() / m_levelLength * 100.f); if (cur <= f->best_percent) return;
-        f->best_percent = cur; 
+        int cur = (int)(m_player1->getPositionX() / m_levelLength * 100.f);
+        if (cur <= f->best_percent) return;
+        f->best_percent = cur;
         double offset = f->attempt_offsets.empty() ? 0 : f->attempt_offsets.front();
         fs::path p = static_cast<MyBaseGameLayer*>(static_cast<GJBaseGameLayer*>(this))->kill_rec();
-        if (!p.empty()) { save_clip(p, f->s_lvl_str, f->n_att_count, offset); auto fs = CCDirector::get()->getOpenGLView()->getFrameSize(); static_cast<MyBaseGameLayer*>(static_cast<GJBaseGameLayer*>(this))->start_rec((int)fs.width, (int)fs.height); }
+        if (!p.empty()) { save_clip(p, f->s_lvl_str, f->current_rec_att, offset); auto fs = CCDirector::get()->getOpenGLView()->getFrameSize(); static_cast<MyBaseGameLayer*>(static_cast<GJBaseGameLayer*>(this))->start_rec((int)fs.width, (int)fs.height); }
+    }
+    void onExit() {
+        PlayLayer::onExit();
+        auto bgl = static_cast<MyBaseGameLayer*>(static_cast<GJBaseGameLayer*>(this));
+        bgl->kill_rec();
+        bgl->cleanup_gl();
+    }
+};
+
+class $modify(MyPauseLayer, PauseLayer) {
+    void customSetup() {
+        PauseLayer::customSetup();
+        auto menu = getChildByID("right-button-menu");
+        if (!menu) menu = getChildByID("left-button-menu");
+        if (!menu) return;
+        
+        auto spr = CCSprite::create("gallery.png"_spr);
+        if (!spr) spr = CCSprite::createWithSpriteFrameName("GJ_playBtn2_001.png");
+        spr->setScale(0.5f);
+        
+        auto btn = CCMenuItemSpriteExtra::create(spr, this, menu_selector(MyPauseLayer::onGallery));
+        btn->setID("gallery-btn"_spr);
+        menu->addChild(btn);
+        menu->updateLayout();
+    }
+    
+    void onGallery(CCObject*) {
+        Gallery::open();
     }
 };

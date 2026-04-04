@@ -9,7 +9,7 @@ bool Watermark::init() {
 
     auto winSize = CCDirector::get()->getWinSize();
 
-    auto mainLabel = CCLabelBMFont::create("Activate EchoClip", "chatFont.fnt");
+    auto mainLabel = CCLabelBMFont::create("Activate EchoClip", "chatFont.fnt");// no one will know till next year.(if i even maintain this mod)
     mainLabel->setScale(0.75f);
     mainLabel->setOpacity(180); 
     mainLabel->setAnchorPoint({1, 0});

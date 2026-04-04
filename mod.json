@@ -94,6 +94,32 @@
             "type": "bool",
             "default": true
         },
+        "record-practice": {
+            "name": "Record in Practice",
+            "description": "whether to record while in practice mode.",
+            "type": "bool",
+            "default": false
+        },
+        "record-startpos": {
+            "name": "Record with StartPos",
+            "description": "whether to record when using a startpos.",
+            "type": "bool",
+            "default": false
+        },
+        "show-encoder": {
+            "name": "Show Encoder on Start",
+            "description": "shows a notification with the active codec when you start a level.",
+            "type": "bool",
+            "default": false
+        },
+        "cleanup-days": {
+            "name": "Auto-Cleanup (Days)",
+            "description": "automatically delete clips older than this many days. set to 0 to disable.",
+            "type": "int",
+            "default": 7,
+            "min": 0,
+            "max": 365
+        },
         "april-fools": {
             "name": "Enable Seasonal Events",
             "description": "Enables fun surprises on specific days (like April 1st).",
