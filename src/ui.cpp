@@ -100,10 +100,11 @@ void Card::onFavorite(CCObject*) {
     fs::path clips_dir = Mod::get()->getSaveDir() / "clips";
     fs::path new_path;
     
+    std::string filename = geode::utils::string::pathToString(m_info_struct.p_path.filename());
     if (m_info_struct.b_is_fav) {
-        new_path = clips_dir / m_info_struct.s_lvl / m_info_struct.p_path.filename();
+        new_path = clips_dir / m_info_struct.s_lvl / filename;
     } else {
-        new_path = clips_dir / "favorites" / m_info_struct.s_lvl / m_info_struct.p_path.filename();
+        new_path = clips_dir / "favorites" / m_info_struct.s_lvl / filename;
     }
     
     fs::create_directories(new_path.parent_path(), ec);
@@ -355,15 +356,15 @@ void Gallery::load() {
         if (ec) break;
         if (!entry_ptr.is_regular_file(ec) || (entry_ptr.path().extension() != ".mkv" && entry_ptr.path().extension() != ".mp4")) continue;
         
-        std::string s_name_stem = entry_ptr.path().stem().string(); 
+        std::string s_name_stem = geode::utils::string::pathToString(entry_ptr.path().stem()); 
         Clip c_info; 
         c_info.p_path = entry_ptr.path(); 
         c_info.nAtts = 0; 
         
-        std::string rel = fs::relative(c_info.p_path, d_path_obj, ec).string();
+        std::string rel = geode::utils::string::pathToString(fs::relative(c_info.p_path, d_path_obj, ec));
         c_info.b_is_fav = rel.find("favorites") != std::string::npos;
         
-        c_info.s_lvl = entry_ptr.path().parent_path().filename().string();
+        c_info.s_lvl = geode::utils::string::pathToString(entry_ptr.path().parent_path().filename());
         if (c_info.s_lvl == "clips" || c_info.s_lvl == "favorites") c_info.s_lvl = s_name_stem;
         
         size_t pos_found = s_name_stem.rfind("_att");
@@ -406,7 +407,8 @@ void Gallery::onClear(CCObject*) {
             fs::path clips_dir = Mod::get()->getSaveDir() / "clips";
             if (fs::exists(clips_dir, ec)) {
                 for (auto const& entry : fs::directory_iterator(clips_dir, ec)) {
-                    if (entry.path().filename() != "favorites" && entry.path().filename() != "temp") {
+                    auto name = geode::utils::string::pathToString(entry.path().filename());
+                    if (name != "favorites" && name != "temp") {
                         fs::remove_all(entry.path(), ec);
                     }
                 }
