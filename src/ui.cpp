@@ -59,7 +59,7 @@ bool Card::init(Clip data_info, float w, float h) {
     auto lbl_time = CCLabelBMFont::create(m_info_struct.s_time_info.c_str(), "chatFont.fnt");
     lbl_time->setScale(0.26f); lbl_time->setColor({110, 110, 110}); 
     lbl_time->setAnchorPoint({1, 0.5f}); 
-    lbl_time->setPosition(w - 50, 12); 
+    lbl_time->setPosition(w - 70, 12); 
     addChild(lbl_time);
     
     auto p_menu_layer = CCMenu::create(); 
@@ -69,7 +69,7 @@ bool Card::init(Clip data_info, float w, float h) {
     auto p_play_spr = CCSprite::createWithSpriteFrameName("GJ_playBtn2_001.png"); 
     p_play_spr->setScale(0.3f);
     auto p_play_btn_obj = CCMenuItemSpriteExtra::create(p_play_spr, this, menu_selector(Card::onPlay));
-    p_play_btn_obj->setPosition(w - 32, h / 2 + 2); 
+    p_play_btn_obj->setPosition(w - 52, h / 2 + 2); 
     p_menu_layer->addChild(p_play_btn_obj);
     
     auto p_del_spr = CCSprite::createWithSpriteFrameName("GJ_deleteBtn_001.png"); 
@@ -77,6 +77,14 @@ bool Card::init(Clip data_info, float w, float h) {
     auto p_del_btn_obj = CCMenuItemSpriteExtra::create(p_del_spr, this, menu_selector(Card::onDelete));
     p_del_btn_obj->setPosition(w - 13, h / 2); 
     p_menu_layer->addChild(p_del_btn_obj);
+
+    auto fav_spr = CCSprite::create("fav.png"_spr);
+    if (!fav_spr) fav_spr = CCSprite::createWithSpriteFrameName("GJ_star_001.png");
+    if (!m_info_struct.b_is_fav) fav_spr->setOpacity(80);
+    fav_spr->setScale(0.2f);
+    auto fav_btn = CCMenuItemSpriteExtra::create(fav_spr, this, menu_selector(Card::onFavorite));
+    fav_btn->setPosition(w - 32, h / 2);
+    p_menu_layer->addChild(fav_btn);
     
     return true;
 }
@@ -85,6 +93,22 @@ void Card::onPlay(CCObject*) {
 #ifdef GEODE_IS_WINDOWS
     ShellExecuteA(NULL, "open", m_info_struct.p_path.string().c_str(), NULL, NULL, SW_SHOWNORMAL);
 #endif
+}
+
+void Card::onFavorite(CCObject*) {
+    std::error_code ec;
+    fs::path clips_dir = Mod::get()->getSaveDir() / "clips";
+    fs::path new_path;
+    
+    if (m_info_struct.b_is_fav) {
+        new_path = clips_dir / m_info_struct.s_lvl / m_info_struct.p_path.filename();
+    } else {
+        new_path = clips_dir / "favorites" / m_info_struct.s_lvl / m_info_struct.p_path.filename();
+    }
+    
+    fs::create_directories(new_path.parent_path(), ec);
+    fs::rename(m_info_struct.p_path, new_path, ec);
+    Gallery::refresh();
 }
 
 void Card::onDelete(CCObject*) {
@@ -336,8 +360,11 @@ void Gallery::load() {
         c_info.p_path = entry_ptr.path(); 
         c_info.nAtts = 0; 
         
+        std::string rel = fs::relative(c_info.p_path, d_path_obj, ec).string();
+        c_info.b_is_fav = rel.find("favorites") != std::string::npos;
+        
         c_info.s_lvl = entry_ptr.path().parent_path().filename().string();
-        if (c_info.s_lvl == "clips") c_info.s_lvl = s_name_stem;
+        if (c_info.s_lvl == "clips" || c_info.s_lvl == "favorites") c_info.s_lvl = s_name_stem;
         
         size_t pos_found = s_name_stem.rfind("_att");
         if (pos_found != std::string::npos) {
@@ -373,11 +400,17 @@ void Gallery::onRefresh(CCObject* p_unused) {
 }
 
 void Gallery::onClear(CCObject*) {
-    geode::createQuickPopup("Clear All", "Delete all clips?\nThis can't be undone.", "No", "Yes", [this](auto, bool b_sure) { // sorry if ui is shit i did my best
+    geode::createQuickPopup("Clear All", "Delete all non-favorite clips?\nThis can't be undone.", "No", "Yes", [this](auto, bool b_sure) { // sorry if ui is shit i did my best
         if (b_sure) { 
             std::error_code ec;
-            fs::remove_all(Mod::get()->getSaveDir() / "clips", ec); 
-            fs::create_directories(Mod::get()->getSaveDir() / "clips", ec); 
+            fs::path clips_dir = Mod::get()->getSaveDir() / "clips";
+            if (fs::exists(clips_dir, ec)) {
+                for (auto const& entry : fs::directory_iterator(clips_dir, ec)) {
+                    if (entry.path().filename() != "favorites" && entry.path().filename() != "temp") {
+                        fs::remove_all(entry.path(), ec);
+                    }
+                }
+            }
             onRefresh(nullptr); 
         } 
     });

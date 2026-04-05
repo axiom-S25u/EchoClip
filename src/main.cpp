@@ -198,6 +198,9 @@ void save_clip(fs::path srcPath, std::string sLvlName, int nAttempts) {
 
         for (auto const& dir_entry : fs::recursive_directory_iterator(p_root_clips, ec)) {
             if (dir_entry.is_regular_file() && (dir_entry.path().extension() == ".mp4" || dir_entry.path().extension() == ".mkv")) {
+                std::string rel = fs::relative(dir_entry.path(), p_root_clips, ec).string();
+                if (rel.find("favorites") != std::string::npos) continue;
+
                 if (max_days > 0) {
                     auto ftime = fs::last_write_time(dir_entry.path(), ec);
                     auto sclock = std::chrono::time_point_cast<std::chrono::system_clock::duration>(ftime - fs::file_time_type::clock::now() + std::chrono::system_clock::now());

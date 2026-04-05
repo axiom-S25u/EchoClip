@@ -14,6 +14,7 @@ struct Clip {
     std::string s_lvl;
     int nAtts;
     std::string s_time_info;
+    bool b_is_fav;
 };
 
 class Card : public CCNode {
@@ -23,6 +24,7 @@ public:
     Clip m_info_struct;
     void onPlay(CCObject* pSender);
     void onDelete(CCObject* pSender);
+    void onFavorite(CCObject* pSender);
 };
 
 class Gallery : public CCLayerColor, public TextInputDelegate {
