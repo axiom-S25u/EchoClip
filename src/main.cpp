@@ -53,17 +53,40 @@ bool check_cpu_bad() {
     return cores < 4; // bro if u have < 4 cores in 2026 just give up
 }
 
+bool is_running_under_wine() {
+    static int cached_result = -1;
+    if (cached_result != -1) return (bool)cached_result;
+
+    HMODULE ntdll = GetModuleHandleA("ntdll.dll");
+    if (ntdll && GetProcAddress(ntdll, "wine_get_version")) {
+        cached_result = 1;
+        return true;
+    }
+    
+
+    cached_result = 0;
+    return false;
+}
+
 std::string get_codec() { // if 1 PERSON SAYS "android when" im banning them from my server
     // this is NEVER comming to other platforms.. maybe, ok but the only one thta could maybe work is mocos
     static std::string cached_codec = "";
     if (!cached_codec.empty()) return cached_codec;
     char* sz_vendor_ptr = (char*)glGetString(GL_VENDOR);
-    if (!sz_vendor_ptr) return "libx264";
-    std::string vStr = geode::utils::string::toLower(sz_vendor_ptr);
+    std::string vStr = sz_vendor_ptr ? geode::utils::string::toLower(sz_vendor_ptr) : "";
+
+    //wine fallbaclk
+    if (is_running_under_wine()) {
+        geode::log::info("wine detected!!!!!!");
+        cached_codec = "libx264";
+        return cached_codec;
+    }
+
     if (vStr.find("nvidia") != std::string::npos) cached_codec = "h264_nvenc";
     else if (vStr.find("amd") != std::string::npos || vStr.find("ati") != std::string::npos || vStr.find("advanced micro") != std::string::npos) cached_codec = "h264_amf";
     else if (vStr.find("intel") != std::string::npos) cached_codec = "h264_qsv";
     else cached_codec = "libx264";
+
     return cached_codec;
 }
 
