@@ -5,8 +5,9 @@
     },
     "id": "axiom.echoclip",
     "name": "EchoClip",
-    "version": "v1.2.1",
+    "version": "v1.2.31",
     "developer": "Axiom",
+    "tags": ["utility", "enhancement", "utility"],
     "description": "record and save clips of your gameplay locally.",
     "links": {
         "source": "https://github.com/axiom-S25u/EchoClip",
@@ -125,6 +126,14 @@
             "description": "Enables fun surprises on specific days (like April 1st).",
             "type": "bool",
             "default": true
+        },
+        "max-ram-usage": {
+            "name": "Max RAM Usage (MB)",
+            "description": "how much RAM to use for buffering frames. higher = less lag but more memory usage.",
+            "type": "int",
+            "default": 512,
+            "min": 150,
+            "max": 4096
         }
     }
 }

@@ -231,7 +231,12 @@ void Gallery::textChanged(CCTextInputNode* p_inp) {
     else { 
         v_filtered_list.clear(); 
         std::string s_low = geode::utils::string::toLower(s_query); 
-        for (auto& c : v_all_clips) if (geode::utils::string::toLower(c.s_lvl).find(s_low) != std::string::npos) v_filtered_list.push_back(c); 
+        for (auto& c : v_all_clips) {
+            if (geode::utils::string::toLower(c.s_lvl).find(s_low) != std::string::npos || 
+                geode::utils::string::toLower(c.p_path.stem().string()).find(s_low) != std::string::npos) {
+                v_filtered_list.push_back(c);
+            }
+        }
     }
     build(); 
     if (p_count_label_ptr) p_count_label_ptr->setString(fmt::format("{} clips", v_filtered_list.size()).c_str());
@@ -242,9 +247,9 @@ void Gallery::build() {
     p_inner_container->removeAllChildren();
     
     float f_w_in = cool_scroller->getViewSize().width; 
-    float pad_val = 5; 
-    float card_w = (f_w_in - pad_val) / 2; 
+    float pad_val = 2; 
     float card_h = 44; 
+    float header_h = 22;
     int count_val = (int)v_filtered_list.size();
     
     if (count_val == 0) {
@@ -258,14 +263,60 @@ void Gallery::build() {
         return;
     }
     
-    float total_h = std::max(cool_scroller->getViewSize().height, (float)((count_val + 1) / 2) * (card_h + pad_val) + pad_val); 
-    p_inner_container->setContentSize({f_w_in, total_h});
-    
-    for (int i = 0; i < count_val; i++) { 
-        auto box_item = Card::create(v_filtered_list[i], card_w, card_h); 
-        box_item->setPosition({(i % 2) * (card_w + pad_val), total_h - (i / 2 + 1) * (card_h + pad_val)}); 
-        p_inner_container->addChild(box_item); 
+    float total_h = 0;
+    std::string last_lvl = "";
+    int row_in_group = 0;
+
+    for (auto& clip : v_filtered_list) {
+        if (clip.s_lvl != last_lvl) {
+            last_lvl = clip.s_lvl;
+            total_h += header_h + pad_val;
+            row_in_group = 0;
+        }
+        if (row_in_group % 2 == 0) total_h += card_h + pad_val;
+        row_in_group++;
     }
+
+    total_h = std::max(cool_scroller->getViewSize().height, total_h + pad_val);
+    p_inner_container->setContentSize({f_w_in, total_h});
+
+    float cur_y = total_h - pad_val;
+    last_lvl = "";
+    row_in_group = 0;
+
+    for (int i = 0; i < count_val; i++) {
+        auto& clip = v_filtered_list[i];
+        if (clip.s_lvl != last_lvl) {
+            if (i > 0 && row_in_group % 2 != 0) cur_y -= card_h + pad_val;
+            last_lvl = clip.s_lvl;
+            cur_y -= header_h;
+            
+            auto bar = CCLayerColor::create({45, 45, 50, 255}, f_w_in, header_h);
+            bar->setPosition({0, cur_y});
+            p_inner_container->addChild(bar);
+            
+            auto lbl = CCLabelBMFont::create(last_lvl.c_str(), "goldFont.fnt");
+            lbl->setScale(0.40f); lbl->setAnchorPoint({0, 0.5f});
+            lbl->setPosition({10, header_h / 2});
+            bar->addChild(lbl);
+            
+            cur_y -= pad_val;
+            row_in_group = 0;
+        }
+
+        float card_w = (f_w_in - pad_val) / 2;
+        auto box = Card::create(clip, card_w, card_h);
+        float x = (row_in_group % 2) * (card_w + pad_val);
+        float y = cur_y - (row_in_group / 2 + 1) * (card_h + pad_val) + pad_val;
+        box->setPosition({x, y});
+        p_inner_container->addChild(box);
+
+        row_in_group++;
+        if (i == count_val - 1 || v_filtered_list[i+1].s_lvl != last_lvl) {
+            cur_y -= ((row_in_group + 1) / 2) * (card_h + pad_val);
+        }
+    }
+
     cool_scroller->setContentSize({f_w_in, total_h}); 
     cool_scroller->setContentOffset({0, cool_scroller->getViewSize().height - total_h});
 }
@@ -276,17 +327,20 @@ void Gallery::load() {
     fs::path d_path_obj = Mod::get()->getSaveDir() / "clips"; 
     if (!fs::exists(d_path_obj, ec)) return;
     
-    for (auto& entry_ptr : fs::directory_iterator(d_path_obj, ec)) {
+    for (auto& entry_ptr : fs::recursive_directory_iterator(d_path_obj, ec)) {
+        if (ec) break;
         if (!entry_ptr.is_regular_file(ec) || (entry_ptr.path().extension() != ".mkv" && entry_ptr.path().extension() != ".mp4")) continue;
+        
         std::string s_name_stem = entry_ptr.path().stem().string(); 
         Clip c_info; 
         c_info.p_path = entry_ptr.path(); 
         c_info.nAtts = 0; 
-        c_info.s_lvl = s_name_stem;
+        
+        c_info.s_lvl = entry_ptr.path().parent_path().filename().string();
+        if (c_info.s_lvl == "clips") c_info.s_lvl = s_name_stem;
         
         size_t pos_found = s_name_stem.rfind("_att");
         if (pos_found != std::string::npos) {
-            c_info.s_lvl = s_name_stem.substr(0, pos_found); 
             std::string s_num_rest = s_name_stem.substr(pos_found + 4); 
             size_t idx_u = s_num_rest.rfind('_');
             std::string s_final_num = (idx_u != std::string::npos) ? s_num_rest.substr(0, idx_u) : s_num_rest;
@@ -297,11 +351,14 @@ void Gallery::load() {
         c_info.s_time_info = format_time_str(fs::last_write_time(entry_ptr.path(), ec)); 
         v_all_clips.push_back(c_info);
     }
+    
     std::sort(v_all_clips.begin(), v_all_clips.end(), [](Clip& a, Clip& b) { 
+        if (a.s_lvl != b.s_lvl) return a.s_lvl < b.s_lvl;
         std::error_code ec1, ec2;
         return fs::last_write_time(a.p_path, ec1) > fs::last_write_time(b.p_path, ec2); 
     });
 }
+
 
 void Gallery::onFolder(CCObject*) {
     geode::utils::file::openFolder(Mod::get()->getSaveDir() / "clips");
