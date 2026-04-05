@@ -91,7 +91,7 @@ bool Card::init(Clip data_info, float w, float h) {
 
 void Card::onPlay(CCObject*) {
 #ifdef GEODE_IS_WINDOWS
-    ShellExecuteA(NULL, "open", m_info_struct.p_path.string().c_str(), NULL, NULL, SW_SHOWNORMAL);
+    ShellExecuteA(NULL, "open", geode::utils::string::pathToString(m_info_struct.p_path).c_str(), NULL, NULL, SW_SHOWNORMAL);
 #endif
 }
 
@@ -258,7 +258,7 @@ void Gallery::textChanged(CCTextInputNode* p_inp) {
         std::string s_low = geode::utils::string::toLower(s_query); 
         for (auto& c : v_all_clips) {
             if (geode::utils::string::toLower(c.s_lvl).find(s_low) != std::string::npos || 
-                geode::utils::string::toLower(c.p_path.stem().string()).find(s_low) != std::string::npos) {
+                geode::utils::string::toLower(geode::utils::string::pathToString(c.p_path.stem())).find(s_low) != std::string::npos) {
                 v_filtered_list.push_back(c);
             }
         }

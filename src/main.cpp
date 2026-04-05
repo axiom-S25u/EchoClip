@@ -163,7 +163,7 @@ void save_clip(fs::path srcPath, std::string sLvlName, int nAttempts) {
         auto ffmpegMod = Loader::get()->getLoadedMod("eclipse.ffmpeg-api");
         if (ffmpegMod) {
             auto path = ffmpegMod->getResourcesDir() / "ffmpeg.exe";
-            if (fs::exists(path, ec)) ff_bin = "\"" + path.string() + "\"";
+            if (fs::exists(path, ec)) ff_bin = "\"" + geode::utils::string::pathToString(path) + "\"";
         }
 
         bool success = false;
@@ -172,7 +172,7 @@ void save_clip(fs::path srcPath, std::string sLvlName, int nAttempts) {
             if (!ec) success = true;
         } else {
             std::string ff_cmd = fmt::format("{} -y -i \"{}\" -metadata title=\"EchoClip\" -c:v {} -preset medium -crf 23 -pix_fmt yuv420p -movflags +faststart \"{}\"",
-                ff_bin, srcPath.string(), codec, tmp_out.string());
+                ff_bin, geode::utils::string::pathToString(srcPath), codec, geode::utils::string::pathToString(tmp_out));
 
             STARTUPINFOA si = { sizeof(si) };
             PROCESS_INFORMATION pi = {};
@@ -198,7 +198,7 @@ void save_clip(fs::path srcPath, std::string sLvlName, int nAttempts) {
 
         for (auto const& dir_entry : fs::recursive_directory_iterator(p_root_clips, ec)) {
             if (dir_entry.is_regular_file() && (dir_entry.path().extension() == ".mp4" || dir_entry.path().extension() == ".mkv")) {
-                std::string rel = fs::relative(dir_entry.path(), p_root_clips, ec).string();
+                std::string rel = geode::utils::string::pathToString(fs::relative(dir_entry.path(), p_root_clips, ec));
                 if (rel.find("favorites") != std::string::npos) continue;
 
                 if (max_days > 0) {
