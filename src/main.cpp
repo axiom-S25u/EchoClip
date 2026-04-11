@@ -543,11 +543,16 @@ class $modify(MyCCEGLView, CCEGLView) {
 
 #ifdef GEODE_IS_ANDROID
                 // OpenGL ES 2.0, fuck PBO's, fuck sync objects, used glReadPixels
+                #define GL_READ_FRAMEBUFFER 0x8CA8
+                #define GL_DRAW_FRAMEBUFFER 0x8CA9
+
                 if (winW != recW || winH != recH) {
-                    glBindFramebuffer(GL_FRAMEBUFFER, f->downscale_fbo);
+                    glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
+                    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, f->downscale_fbo);
                     glBlitFramebuffer(0, 0, winW, winH, 0, 0, recW, recH, GL_COLOR_BUFFER_BIT, GL_LINEAR);
+                    glBindFramebuffer(GL_READ_FRAMEBUFFER, f->downscale_fbo);
                 } else {
-                    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+                    glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
                 }
 
                 std::vector<uint8_t> c_pixel;
