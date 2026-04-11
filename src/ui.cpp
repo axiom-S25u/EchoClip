@@ -63,18 +63,20 @@ bool Card::init(Clip data_info, float w, float h) {
     addChild(lbl_time);
     
     auto p_menu_layer = CCMenu::create(); 
-    p_menu_layer->setPosition(0, 0); 
-    addChild(p_menu_layer);
+    p_menu_layer->setPosition(0, 0);
+    p_menu_layer->setContentSize({w, h});
+    p_menu_layer->setTouchPriority(-502);
+    addChild(p_menu_layer, 10);
     
     auto p_play_spr = CCSprite::createWithSpriteFrameName("GJ_playBtn2_001.png"); 
     p_play_spr->setScale(0.3f);
-    auto p_play_btn_obj = CCMenuItemSpriteExtra::create(p_play_spr, this, menu_selector(Card::onPlay));
+    auto p_play_btn_obj = CCMenuItemSpriteExtra::create(p_play_spr, nullptr, this, menu_selector(Card::onPlay));
     p_play_btn_obj->setPosition(w - 52, h / 2 + 2); 
     p_menu_layer->addChild(p_play_btn_obj);
     
     auto p_del_spr = CCSprite::createWithSpriteFrameName("GJ_deleteBtn_001.png"); 
     p_del_spr->setScale(0.45f);
-    auto p_del_btn_obj = CCMenuItemSpriteExtra::create(p_del_spr, this, menu_selector(Card::onDelete));
+    auto p_del_btn_obj = CCMenuItemSpriteExtra::create(p_del_spr, nullptr, this, menu_selector(Card::onDelete));
     p_del_btn_obj->setPosition(w - 13, h / 2); 
     p_menu_layer->addChild(p_del_btn_obj);
 
@@ -82,7 +84,7 @@ bool Card::init(Clip data_info, float w, float h) {
     if (!fav_spr) fav_spr = CCSprite::createWithSpriteFrameName("GJ_star_001.png");
     if (!m_info_struct.b_is_fav) fav_spr->setOpacity(80);
     fav_spr->setScale(0.2f);
-    auto fav_btn = CCMenuItemSpriteExtra::create(fav_spr, this, menu_selector(Card::onFavorite));
+    auto fav_btn = CCMenuItemSpriteExtra::create(fav_spr, nullptr, this, menu_selector(Card::onFavorite));
     fav_btn->setPosition(w - 32, h / 2);
     p_menu_layer->addChild(fav_btn);
     
@@ -168,7 +170,8 @@ bool Gallery::init() {
     float f_width = 500.f, f_height = 320.f;
     p_MainPanel = CCLayerColor::create({22, 22, 25, 255}, f_width, f_height);
     p_MainPanel->setPosition(win_size_val.width / 2 - f_width / 2, win_size_val.height / 2 - f_height / 2);
-    p_MainPanel->setTouchEnabled(false); 
+    p_MainPanel->setTouchEnabled(true);
+    p_MainPanel->setTouchMode(kCCTouchesOneByOne);
     addChild(p_MainPanel);
     
     auto top_bar_layer = CCLayerColor::create({38, 38, 45, 255}, f_width, 38); 
@@ -185,18 +188,20 @@ bool Gallery::init() {
     p_MainPanel->addChild(p_title_label, 1);
     
     auto p_top_menu = CCMenu::create(); 
-    p_top_menu->setPosition({0, 0}); 
+    p_top_menu->setPosition({0, 0});
+    p_top_menu->setContentSize({f_width, f_height});
+    p_top_menu->setTouchPriority(-502);
     p_MainPanel->addChild(p_top_menu, 10);
     
     auto p_close_spr = CCSprite::createWithSpriteFrameName("GJ_closeBtn_001.png"); 
     p_close_spr->setScale(0.85f);
-    auto p_close_btn_obj = CCMenuItemSpriteExtra::create(p_close_spr, this, menu_selector(Gallery::onClose)); 
+    auto p_close_btn_obj = CCMenuItemSpriteExtra::create(p_close_spr, nullptr, this, menu_selector(Gallery::onClose)); 
     p_close_btn_obj->setPosition({16, f_height - 19}); 
     p_top_menu->addChild(p_close_btn_obj);
     
     auto p_ref_spr = CCSprite::createWithSpriteFrameName("GJ_updateBtn_001.png"); 
     p_ref_spr->setScale(0.65f);
-    auto p_ref_btn_obj = CCMenuItemSpriteExtra::create(p_ref_spr, this, menu_selector(Gallery::onRefresh)); 
+    auto p_ref_btn_obj = CCMenuItemSpriteExtra::create(p_ref_spr, nullptr, this, menu_selector(Gallery::onRefresh)); 
     p_ref_btn_obj->setPosition({f_width - 16, f_height - 19}); 
     p_top_menu->addChild(p_ref_btn_obj);
     
@@ -231,12 +236,14 @@ bool Gallery::init() {
     
     auto p_bottom_menu = CCMenu::create(); 
     p_bottom_menu->setPosition({f_width / 2 + 30, 21});
+    p_bottom_menu->setContentSize({f_width, 42});
+    p_bottom_menu->setTouchPriority(-502);
     p_bottom_menu->setLayout(RowLayout::create()->setGap(8)->setAxisAlignment(AxisAlignment::Center)); 
     p_MainPanel->addChild(p_bottom_menu, 10);
     
-    p_bottom_menu->addChild(CCMenuItemSpriteExtra::create(ButtonSprite::create("Folder", "goldFont.fnt", "GJ_button_04.png", 0.6f), this, menu_selector(Gallery::onFolder)));
-    p_bottom_menu->addChild(CCMenuItemSpriteExtra::create(ButtonSprite::create("Settings", "goldFont.fnt", "GJ_button_04.png", 0.6f), this, menu_selector(Gallery::onSettings)));
-    p_bottom_menu->addChild(CCMenuItemSpriteExtra::create(ButtonSprite::create("Clear All", "goldFont.fnt", "GJ_button_06.png", 0.6f), this, menu_selector(Gallery::onClear)));
+    p_bottom_menu->addChild(CCMenuItemSpriteExtra::create(ButtonSprite::create("Folder", "goldFont.fnt", "GJ_button_04.png", 0.6f), nullptr, this, menu_selector(Gallery::onFolder)));
+    p_bottom_menu->addChild(CCMenuItemSpriteExtra::create(ButtonSprite::create("Settings", "goldFont.fnt", "GJ_button_04.png", 0.6f), nullptr, this, menu_selector(Gallery::onSettings)));
+    p_bottom_menu->addChild(CCMenuItemSpriteExtra::create(ButtonSprite::create("Clear All", "goldFont.fnt", "GJ_button_06.png", 0.6f), nullptr, this, menu_selector(Gallery::onClear)));
     p_bottom_menu->updateLayout();
     
     p_count_label_ptr = CCLabelBMFont::create("0 clips", "chatFont.fnt");

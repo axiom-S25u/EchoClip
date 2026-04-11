@@ -336,14 +336,17 @@ class $modify(MyBaseGameLayer, GJBaseGameLayer) {
 
     void trigger_clip() {
         Fields* f = m_fields.self();
-        if (f->active) {
-            auto s = kill_rec();
-            if (s) {
-                finalize_and_save(s, f->s_lvl_str, f->current_rec_att);
-                int w = 0, h = 0;
-                get_target_rec_size(w, h);
-                start_rec(w, h);
-            }
+        if (!Mod::get()->getSettingValue<bool>("enabled")) return;
+        if (!f->active || !f->session) {
+            geode::log::warn("trigger_clip called but not active");
+            return;
+        }
+        auto s = kill_rec();
+        if (s) {
+            finalize_and_save(s, f->s_lvl_str, f->current_rec_att);
+            int w = 0, h = 0;
+            get_target_rec_size(w, h);
+            start_rec(w, h);
         }
     }
 
@@ -370,73 +373,98 @@ class $modify(MyBaseGameLayer, GJBaseGameLayer) {
         fs::create_directories(d, ec);
         fs::path temp_p = d / fmt::format("r_{}_{}.mp4", (int)get_time_val(), rand() % 100000);
 
-        ffmpeg::RenderSettings config;
-        config.m_height = recH; config.m_width = recW;
-        config.m_fps = (uint16_t)Mod::get()->getSettingValue<int64_t>("target-fps");
-        config.m_bitrate = 15000000;
-        config.m_outputFile = temp_p;
-        config.m_codec = get_codec();
-        config.m_pixelFormat = ffmpeg::PixelFormat::BGRA;
-        config.m_doVerticalFlip = true;
+        std::vector<std::string> codecs_to_try;
+        std::string preferred = get_codec();
+        codecs_to_try.push_back(preferred);
+        if (preferred != "libx264") codecs_to_try.push_back("libx264");
 
-        ffmpeg::events::Recorder* p_rec = new ffmpeg::events::Recorder();
-        auto res = p_rec->init(config);
-        if (res.isOk()) {
-            auto s = std::make_shared<RecSession>();
-            s->rec = p_rec; s->max_frames = max_f; s->temp_file_p = temp_p;
-            m_fields->session = s;
-            m_fields->nW = recW; m_fields->nH = recH;
-            m_fields->active = true; m_fields->n_pushed_frames = 0;
-            Fields* f = m_fields.self();
+        ffmpeg::events::Recorder* p_rec = nullptr;
+        std::string working_codec = "";
 
-            if (f->downscale_fbo && f->prev_downscale_w == recW && f->prev_downscale_h == recH) {
-            } else {
-                if (f->downscale_fbo) { glDeleteFramebuffers(1, &f->downscale_fbo); f->downscale_fbo = 0; }
-                if (f->downscale_tex) { glDeleteTextures(1, &f->downscale_tex); f->downscale_tex = 0; }
-                glGenFramebuffers(1, &f->downscale_fbo);
-                glBindFramebuffer(GL_FRAMEBUFFER, f->downscale_fbo);
-                glGenTextures(1, &f->downscale_tex);
-                glBindTexture(GL_TEXTURE_2D, f->downscale_tex);
-                glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, recW, recH, 0, GL_RGBA, GL_UNSIGNED_BYTE, 0);
-                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-                glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, f->downscale_tex, 0);
-                glBindFramebuffer(GL_FRAMEBUFFER, 0);
-                f->prev_downscale_w = recW;
-                f->prev_downscale_h = recH;
+        for (auto const& codec : codecs_to_try) {
+            ffmpeg::RenderSettings config;
+            config.m_height = recH; config.m_width = recW;
+            config.m_fps = (uint16_t)Mod::get()->getSettingValue<int64_t>("target-fps");
+            config.m_bitrate = 15000000;
+            config.m_outputFile = temp_p;
+            config.m_codec = codec;
+            config.m_pixelFormat = ffmpeg::PixelFormat::BGRA;
+            config.m_doVerticalFlip = true;
+
+            ffmpeg::events::Recorder* candidate = new ffmpeg::events::Recorder();
+            auto res = candidate->init(config);
+            if (res.isOk()) {
+                p_rec = candidate;
+                working_codec = codec;
+                break;
             }
-
-            {
-                std::lock_guard<std::mutex> l(s->m_p_mtx);
-                s->pool_frames.clear();
-                int pre = std::min(s->max_frames, 60);
-                if (s->max_frames > 200) pre = std::max(pre, s->max_frames / 4);
-                for (int i = 0; i < pre; i++) s->pool_frames.push_back(std::vector<uint8_t>(sz_bytes));
-            }
-
-            s->p_worker_thread = new std::thread([s]() {
-                while (true) {
-                    std::vector<uint8_t> c_pixel;
-                    {
-                        std::unique_lock<std::mutex> lk(s->m_q_mtx);
-                        s->m_cv.wait(lk, [s] { return s->dead || !s->c_pixel_q.empty(); });
-                        if (s->dead && s->c_pixel_q.empty()) break;
-                        c_pixel = std::move(s->c_pixel_q.front()); s->c_pixel_q.pop();
-                    }
-                    (void)s->rec->writeFrame(c_pixel);
-                    std::lock_guard<std::mutex> l(s->m_p_mtx);
-                    std::lock_guard<std::mutex> lq(s->m_q_mtx);
-                    if ((int)(s->pool_frames.size() + s->c_pixel_q.size()) < s->max_frames) {
-                        s->pool_frames.push_back(std::move(c_pixel));
-                    }
-                }
-            });
-            if (m_fields->b_setup_done) cleanup_gl();
-        } else {
-            delete p_rec;
+            geode::log::warn("codec {} failed to init, trying next", codec);
+            delete candidate;
         }
+
+        if (!p_rec) {
+            geode::log::error("all codecs failed, recording disabled for this attempt");
+            return;
+        }
+
+        if (working_codec != preferred) {
+            Loader::get()->queueInMainThread([working_codec] {
+                Notification::create(fmt::format("Fallback codec: {}", working_codec), CCSprite::createWithSpriteFrameName("GJ_infoIcon_001.png"), 3.f)->show();
+            });
+        }
+
+        auto s = std::make_shared<RecSession>();
+        s->rec = p_rec; s->max_frames = max_f; s->temp_file_p = temp_p;
+        m_fields->session = s;
+        m_fields->nW = recW; m_fields->nH = recH;
+        m_fields->active = true; m_fields->n_pushed_frames = 0;
+        Fields* f = m_fields.self();
+
+        if (f->downscale_fbo && f->prev_downscale_w == recW && f->prev_downscale_h == recH) {
+        } else {
+            if (f->downscale_fbo) { glDeleteFramebuffers(1, &f->downscale_fbo); f->downscale_fbo = 0; }
+            if (f->downscale_tex) { glDeleteTextures(1, &f->downscale_tex); f->downscale_tex = 0; }
+            glGenFramebuffers(1, &f->downscale_fbo);
+            glBindFramebuffer(GL_FRAMEBUFFER, f->downscale_fbo);
+            glGenTextures(1, &f->downscale_tex);
+            glBindTexture(GL_TEXTURE_2D, f->downscale_tex);
+            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, recW, recH, 0, GL_RGBA, GL_UNSIGNED_BYTE, 0);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+            glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, f->downscale_tex, 0);
+            glBindFramebuffer(GL_FRAMEBUFFER, 0);
+            f->prev_downscale_w = recW;
+            f->prev_downscale_h = recH;
+        }
+
+        {
+            std::lock_guard<std::mutex> l(s->m_p_mtx);
+            s->pool_frames.clear();
+            int pre = std::min(s->max_frames, 60);
+            if (s->max_frames > 200) pre = std::max(pre, s->max_frames / 4);
+            for (int i = 0; i < pre; i++) s->pool_frames.push_back(std::vector<uint8_t>(sz_bytes));
+        }
+
+        s->p_worker_thread = new std::thread([s]() {
+            while (true) {
+                std::vector<uint8_t> c_pixel;
+                {
+                    std::unique_lock<std::mutex> lk(s->m_q_mtx);
+                    s->m_cv.wait(lk, [s] { return s->dead || !s->c_pixel_q.empty(); });
+                    if (s->dead && s->c_pixel_q.empty()) break;
+                    c_pixel = std::move(s->c_pixel_q.front()); s->c_pixel_q.pop();
+                }
+                (void)s->rec->writeFrame(c_pixel);
+                std::lock_guard<std::mutex> l(s->m_p_mtx);
+                std::lock_guard<std::mutex> lq(s->m_q_mtx);
+                if ((int)(s->pool_frames.size() + s->c_pixel_q.size()) < s->max_frames) {
+                    s->pool_frames.push_back(std::move(c_pixel));
+                }
+            }
+        });
+        if (m_fields->b_setup_done) cleanup_gl();
     }
 
     std::shared_ptr<RecSession> kill_rec() {
@@ -475,10 +503,8 @@ $execute {
     cleanup_temp_folder();
     listenForKeybindSettingPresses("clip-keybind", [](geode::Keybind const&, bool down, bool repeat, double) {
         if (down && !repeat) {
-            if (Mod::get()->getSettingValue<bool>("enabled")) {
-                if (auto layer = GJBaseGameLayer::get()) {
-                    static_cast<MyBaseGameLayer*>(layer)->trigger_clip();
-                }
+            if (auto bgl = GJBaseGameLayer::get()) {
+                static_cast<MyBaseGameLayer*>(bgl)->trigger_clip();
             }
         }
     });
@@ -648,8 +674,8 @@ class $modify(MyPlayLayer, PlayLayer) {
         PlayLayer::destroyPlayer(boi, obj);
         auto bgl = static_cast<MyBaseGameLayer*>(static_cast<GJBaseGameLayer*>(this));
         auto f = bgl->m_fields.self();
-        if (!f || !f->clip_new_best || !m_player1 || !m_level || m_levelLength <= 0.f) return;
-        int cur = (int)(m_player1->getPositionX() / m_levelLength * 100.f);
+        if (!f || !f->clip_new_best || !m_player1 || !m_level) return;
+        int cur = (int)this->getCurrentPercent();
         if (cur <= f->best_percent) return;
         f->best_percent = cur;
         auto s = bgl->kill_rec();
