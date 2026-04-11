@@ -92,6 +92,9 @@ bool Card::init(Clip data_info, float w, float h) {
 void Card::onPlay(CCObject*) {
 #ifdef GEODE_IS_WINDOWS
     ShellExecuteA(NULL, "open", geode::utils::string::pathToString(m_info_struct.p_path).c_str(), NULL, NULL, SW_SHOWNORMAL);
+#elif defined(GEODE_IS_ANDROID)
+    // open the clips folder in the android file manager
+    geode::utils::file::openFolder(m_info_struct.p_path.parent_path());
 #endif
 }
 
@@ -387,7 +390,6 @@ void Gallery::load() {
     });
 }
 
-
 void Gallery::onFolder(CCObject*) {
     geode::utils::file::openFolder(Mod::get()->getSaveDir() / "clips");
 }
@@ -401,7 +403,7 @@ void Gallery::onRefresh(CCObject* p_unused) {
 }
 
 void Gallery::onClear(CCObject*) {
-    geode::createQuickPopup("Clear All", "Delete all non-favorite clips?\nThis can't be undone.", "No", "Yes", [this](auto, bool b_sure) { // sorry if ui is shit i did my best
+    geode::createQuickPopup("Clear All", "Delete all non-favorite clips?\nThis can't be undone.", "No", "Yes", [this](auto, bool b_sure) {
         if (b_sure) { 
             std::error_code ec;
             fs::path clips_dir = Mod::get()->getSaveDir() / "clips";
@@ -420,7 +422,7 @@ void Gallery::onClear(CCObject*) {
 
 void Gallery::onClose(CCObject*) { removeFromParent(); }
 void Gallery::keyBackClicked() { removeFromParent(); }
-// if whoever is reviewing this has patience to help with the ui pls do, i did my  best :sob:, pls make a pr
+// if whoever is reviewing this has patience to help with the ui pls do, i did my best :sob:, pls make a pr
 bool Gallery::ccTouchBegan(CCTouch* p_t, CCEvent*) {
     CCPoint loc_pt = p_MainPanel->convertTouchToNodeSpace(p_t); 
     CCSize panel_sz = p_MainPanel->getContentSize();
