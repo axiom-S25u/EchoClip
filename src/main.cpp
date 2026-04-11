@@ -533,10 +533,10 @@ class $modify(MyCCEGLView, CCEGLView) {
                 int winW = (int)fs.width; int winH = (int)fs.height;
 
 #ifdef GEODE_IS_ANDROID
-                // OpenGL ES 2.0 - no PBOs, no sync objects, use plain glReadPixels
+                // OpenGL ES 2.0, fuck PBO's, fuck sync objects, used glReadPixels
                 if (winW != recW || winH != recH) {
                     glBindFramebuffer(GL_FRAMEBUFFER, f->downscale_fbo);
-                    glBlitFramebufferNV(0, 0, winW, winH, 0, 0, recW, recH, GL_COLOR_BUFFER_BIT, GL_LINEAR);
+                    glBlitFramebuffer(0, 0, winW, winH, 0, 0, recW, recH, GL_COLOR_BUFFER_BIT, GL_LINEAR);
                 } else {
                     glBindFramebuffer(GL_FRAMEBUFFER, 0);
                 }
