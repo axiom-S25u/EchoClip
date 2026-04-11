@@ -27,10 +27,16 @@
 #ifdef GEODE_IS_ANDROID
 #include <fstream>
 #include <sys/sysinfo.h>
-extern "C" void glBlitFramebuffer(int srcX0, int srcY0, int srcX1, int srcY1,
-                                   int dstX0, int dstY0, int dstX1, int dstY1,
-                                   unsigned int mask, unsigned int filter);
+#include <EGL/egl.h>
+typedef void (*PFNGLBLITFRAMEBUFFERPROC)(int,int,int,int,int,int,int,int,unsigned int,unsigned int);
+static PFNGLBLITFRAMEBUFFERPROC s_glBlitFramebuffer = nullptr;
+static void ensureBlitFramebuffer() {
+    if (!s_glBlitFramebuffer)
+        s_glBlitFramebuffer = (PFNGLBLITFRAMEBUFFERPROC)eglGetProcAddress("glBlitFramebuffer");
+}
+#define glBlitFramebuffer(...) (ensureBlitFramebuffer(), s_glBlitFramebuffer(__VA_ARGS__))
 #endif
+// FUCK ANDROID FRAMEBUFFER BS
 
 using namespace geode::prelude;
 namespace fs = std::filesystem;
