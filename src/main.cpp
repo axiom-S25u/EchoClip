@@ -25,6 +25,7 @@
 #endif
 
 #ifdef GEODE_IS_ANDROID
+#include <GLES3/gl3.h>
 #include <fstream>
 #include <sys/sysinfo.h>
 #endif
