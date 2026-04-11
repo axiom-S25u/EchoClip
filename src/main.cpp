@@ -326,9 +326,12 @@ class $modify(MyBaseGameLayer, GJBaseGameLayer) {
         int n_att_count = 0, best_percent = 0;
         float f_timer_val = 0;
 
+#ifndef GEODE_IS_ANDROID
         GLuint pbo_bufer[3] = {0, 0, 0};
         GLsync fences_sync_ptr[3] = {0, 0, 0};
-        int write_idx = 0, n_pushed_frames = 0;
+        int write_idx = 0;
+#endif
+        int n_pushed_frames = 0;
         bool b_setup_done = false;
         bool b_capture_this_frame = false;
 
@@ -341,7 +344,9 @@ class $modify(MyBaseGameLayer, GJBaseGameLayer) {
 
         ~Fields() {
             if (session) { session->dead = true; session->m_cv.notify_all(); }
+#ifndef GEODE_IS_ANDROID
             for (int i = 0; i < 3; i++) if (fences_sync_ptr[i]) { glDeleteSync(fences_sync_ptr[i]); fences_sync_ptr[i] = 0; }
+#endif
             if (downscale_fbo) glDeleteFramebuffers(1, &downscale_fbo);
             if (downscale_tex) glDeleteTextures(1, &downscale_tex);
         }
@@ -397,7 +402,11 @@ class $modify(MyBaseGameLayer, GJBaseGameLayer) {
         config.m_bitrate = 15000000;
         config.m_outputFile = temp_p;
         config.m_codec = get_codec();
+#ifdef GEODE_IS_ANDROID
+        config.m_pixelFormat = ffmpeg::PixelFormat::RGBA;
+#else
         config.m_pixelFormat = ffmpeg::PixelFormat::BGRA;
+#endif
         config.m_doVerticalFlip = true;
 
         ffmpeg::events::Recorder* p_rec = new ffmpeg::events::Recorder();
@@ -471,8 +480,10 @@ class $modify(MyBaseGameLayer, GJBaseGameLayer) {
 
     void cleanup_gl() {
         if (!m_fields->b_setup_done) return;
+#ifndef GEODE_IS_ANDROID
         glDeleteBuffers(3, m_fields->pbo_bufer);
         for (int i = 0; i < 3; i++) if (m_fields->fences_sync_ptr[i]) { glDeleteSync(m_fields->fences_sync_ptr[i]); m_fields->fences_sync_ptr[i] = 0; }
+#endif
         m_fields->b_setup_done = false;
     }
 
@@ -521,6 +532,37 @@ class $modify(MyCCEGLView, CCEGLView) {
                 auto fs = CCDirector::get()->getOpenGLView()->getFrameSize();
                 int winW = (int)fs.width; int winH = (int)fs.height;
 
+#ifdef GEODE_IS_ANDROID
+                // OpenGL ES 2.0 - no PBOs, no sync objects, use plain glReadPixels
+                if (winW != recW || winH != recH) {
+                    glBindFramebuffer(GL_FRAMEBUFFER, f->downscale_fbo);
+                    glBlitFramebufferNV(0, 0, winW, winH, 0, 0, recW, recH, GL_COLOR_BUFFER_BIT, GL_LINEAR);
+                } else {
+                    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+                }
+
+                std::vector<uint8_t> c_pixel;
+                {
+                    std::lock_guard<std::mutex> l(s->m_p_mtx);
+                    if (!s->pool_frames.empty()) { c_pixel = std::move(s->pool_frames.back()); s->pool_frames.pop_back(); }
+                }
+                if (c_pixel.size() != (size_t)sz_bytes) c_pixel.resize(sz_bytes);
+                // GL_BGRA may not be available on ES, use GL_RGBA
+                glReadPixels(0, 0, recW, recH, GL_RGBA, GL_UNSIGNED_BYTE, c_pixel.data());
+                glBindFramebuffer(GL_FRAMEBUFFER, 0);
+
+                {
+                    std::lock_guard<std::mutex> lp(s->m_p_mtx);
+                    std::lock_guard<std::mutex> lq(s->m_q_mtx);
+                    if ((int)s->c_pixel_q.size() < s->max_frames) {
+                        s->c_pixel_q.push(std::move(c_pixel));
+                        s->m_cv.notify_one();
+                    } else if ((int)s->pool_frames.size() < s->max_frames) {
+                        s->pool_frames.push_back(std::move(c_pixel));
+                    }
+                }
+#else
+                // Desktop OpenGL - full async triple-PBO path
                 if (!f->b_setup_done) {
                     glGenBuffers(3, f->pbo_bufer);
                     for (int i = 0; i < 3; i++) {
@@ -533,8 +575,6 @@ class $modify(MyCCEGLView, CCEGLView) {
                 }
 
                 if (winW != recW || winH != recH) {
-                    glBindFramebuffer(GL_READ_FRAMEBUFFER, f->downscale_fbo);
-                    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, f->downscale_fbo);
                     glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
                     glBindFramebuffer(GL_DRAW_FRAMEBUFFER, f->downscale_fbo);
                     glBlitFramebuffer(0, 0, winW, winH, 0, 0, recW, recH, GL_COLOR_BUFFER_BIT, GL_LINEAR);
@@ -583,6 +623,7 @@ class $modify(MyCCEGLView, CCEGLView) {
                 }
                 glBindFramebuffer(GL_FRAMEBUFFER, 0);
                 glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
+#endif
             }
         }
         CCEGLView::swapBuffers();
