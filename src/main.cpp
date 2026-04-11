@@ -24,6 +24,11 @@
 #include <shellapi.h>
 #endif
 
+#ifdef GEODE_IS_ANDROID
+#include <fstream>
+#include <sys/sysinfo.h>
+#endif
+
 using namespace geode::prelude;
 namespace fs = std::filesystem;
 
@@ -43,14 +48,14 @@ bool check_vram_low() { // i know someonme will complain about low fps so i adde
         vram_mb = (int)(d.DedicatedVideoMemory / (1024 * 1024));
         a->Release(); f->Release();
     }
-    return vram_mb < 2048; // lowered this because 6gb was crazy lol, wait but if someone is on an igpu, dont they have like 256mb or smh? meh not my problem
+    return vram_mb < 2048;
 #endif
     return false;
 }
 
 bool check_cpu_bad() {
     static int cores = std::thread::hardware_concurrency();
-    return cores < 4; // bro if u have < 4 cores in 2026 just give up
+    return cores < 4;
 }
 
 bool is_running_under_wine() {
@@ -75,19 +80,27 @@ int64_t get_total_ram_mb() {
 #ifdef GEODE_IS_WINDOWS
     MEMORYSTATUSEX s; s.dwLength = sizeof(s);
     if (GlobalMemoryStatusEx(&s)) return (int64_t)(s.ullTotalPhys / (1024 * 1024));
+#elif defined(GEODE_IS_ANDROID)
+    struct sysinfo si;
+    if (sysinfo(&si) == 0) return (int64_t)(si.totalram * si.mem_unit / (1024 * 1024));
 #endif
     return 4096;
 }
 
-std::string get_codec() { // if 1 PERSON SAYS "android when" im banning them from my server
-    // this is NEVER comming to other platforms.. maybe, ok but the only one thta could maybe work is mocos
+std::string get_codec() {
     static std::string cached_codec = "";
     if (!cached_codec.empty()) return cached_codec;
+
+#ifdef GEODE_IS_ANDROID
+    // h264_mediacodec uses the hardware encoder on android, much better than libx264
+    cached_codec = "h264_mediacodec";
+    return cached_codec;
+#endif
+
     char* sz_vendor_ptr = (char*)glGetString(GL_VENDOR);
     if (!sz_vendor_ptr) return "libx264";
     std::string vStr = sz_vendor_ptr ? geode::utils::string::toLower(sz_vendor_ptr) : "";
 
-    //wine fallbaclk
     if (is_running_under_wine()) {
         geode::log::info("wine detected!!!!!!");
         cached_codec = "libx264";
@@ -111,7 +124,6 @@ void cleanup_temp_folder() {
     }
 }
 
-// u know what, thank god gd uses opengl vulkan would be hell
 static void get_target_rec_size(int& outW, int& outH) {
     std::string outputRes = Mod::get()->getSettingValue<std::string>("output-res");
     int targetH = 720;
@@ -156,6 +168,10 @@ void save_clip(fs::path srcPath, std::string sLvlName, int nAttempts) {
         fs::create_directories(p_lvl_dir, ec);
 
         fs::path out_file_path = p_lvl_dir / fmt::format("{}_att{}_{}.mp4", clean_name, nAttempts, (long long)::time(0));
+
+        bool success = false;
+
+#ifdef GEODE_IS_WINDOWS
         fs::path tmp_out = Mod::get()->getSaveDir() / "temp" / fmt::format("_tmp_{}_{}.mp4", (long long)::time(0), rand() % 1000);
 
         std::string codec = get_codec();
@@ -166,7 +182,6 @@ void save_clip(fs::path srcPath, std::string sLvlName, int nAttempts) {
             if (fs::exists(path, ec)) ff_bin = "\"" + geode::utils::string::pathToString(path) + "\"";
         }
 
-        bool success = false;
         if (ff_bin.empty()) {
             fs::rename(srcPath, out_file_path, ec);
             if (!ec) success = true;
@@ -189,6 +204,11 @@ void save_clip(fs::path srcPath, std::string sLvlName, int nAttempts) {
                 if (!ec) success = true;
             }
         }
+#else
+        // on android just move the file directly, no re-encoding needed
+        fs::rename(srcPath, out_file_path, ec);
+        if (!ec) success = true;
+#endif
 
         int64_t max_days = Mod::get()->getSettingValue<int64_t>("cleanup-days");
         uintmax_t max_bytes = (uintmax_t)Mod::get()->getSettingValue<int64_t>("storage-limit") * 1024 * 1024 * 1024;
@@ -197,6 +217,7 @@ void save_clip(fs::path srcPath, std::string sLvlName, int nAttempts) {
         auto now_sys = std::chrono::system_clock::now();
 
         for (auto const& dir_entry : fs::recursive_directory_iterator(p_root_clips, ec)) {
+            if (ec) break;
             if (dir_entry.is_regular_file() && (dir_entry.path().extension() == ".mp4" || dir_entry.path().extension() == ".mkv")) {
                 std::string rel = geode::utils::string::pathToString(fs::relative(dir_entry.path(), p_root_clips, ec));
                 if (rel.find("favorites") != std::string::npos) continue;
@@ -473,6 +494,7 @@ class $modify(MyBaseGameLayer, GJBaseGameLayer) {
 
 $execute {
     cleanup_temp_folder();
+#if defined(GEODE_IS_WINDOWS) || defined(GEODE_IS_MACOS)
     listenForKeybindSettingPresses("clip-keybind", [](geode::Keybind const&, bool down, bool repeat, double) {
         if (down && !repeat) {
             if (Mod::get()->getSettingValue<bool>("enabled")) {
@@ -482,6 +504,7 @@ $execute {
             }
         }
     });
+#endif
 }
 
 class $modify(MyCCEGLView, CCEGLView) {
@@ -510,6 +533,8 @@ class $modify(MyCCEGLView, CCEGLView) {
                 }
 
                 if (winW != recW || winH != recH) {
+                    glBindFramebuffer(GL_READ_FRAMEBUFFER, f->downscale_fbo);
+                    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, f->downscale_fbo);
                     glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
                     glBindFramebuffer(GL_DRAW_FRAMEBUFFER, f->downscale_fbo);
                     glBlitFramebuffer(0, 0, winW, winH, 0, 0, recW, recH, GL_COLOR_BUFFER_BIT, GL_LINEAR);
