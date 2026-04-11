@@ -25,9 +25,11 @@
 #endif
 
 #ifdef GEODE_IS_ANDROID
-#include <GLES3/gl3.h>
 #include <fstream>
 #include <sys/sysinfo.h>
+extern "C" void glBlitFramebuffer(int srcX0, int srcY0, int srcX1, int srcY1,
+                                   int dstX0, int dstY0, int dstX1, int dstY1,
+                                   unsigned int mask, unsigned int filter);
 #endif
 
 using namespace geode::prelude;
