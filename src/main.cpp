@@ -371,14 +371,17 @@ class $modify(MyBaseGameLayer, GJBaseGameLayer) {
 
     void trigger_clip() {
         Fields* f = m_fields.self();
-        if (f->active) {
-            auto s = kill_rec();
-            if (s) {
-                finalize_and_save(s, f->s_lvl_str, f->current_rec_att);
-                int w = 0, h = 0;
-                get_target_rec_size(w, h);
-                start_rec(w, h);
-            }
+        if (!Mod::get()->getSettingValue<bool>("enabled")) return;
+        if (!f->active || !f->session) {
+            geode::log::warn("trigger_clip called but not active");
+            return;
+        }
+        auto s = kill_rec();
+        if (s) {
+            finalize_and_save(s, f->s_lvl_str, f->current_rec_att);
+            int w = 0, h = 0;
+            get_target_rec_size(w, h);
+            start_rec(w, h);
         }
     }
 
