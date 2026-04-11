@@ -5,9 +5,9 @@
     },
     "id": "axiom.echoclip",
     "name": "EchoClip",
-    "version": "v1.2.313",
+    "version": "v1.2.32",
     "developer": "Axiom",
-    "tags": ["utility", "enhancement", "utility"],
+    "tags": ["utility", "enhancement"],
     "description": "record and save clips of your gameplay locally.",
     "links": {
         "source": "https://github.com/axiom-S25u/EchoClip",

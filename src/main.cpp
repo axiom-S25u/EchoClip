@@ -326,6 +326,14 @@ class $modify(MyBaseGameLayer, GJBaseGameLayer) {
         }
     };
 
+    bool init() {
+        if (!GJBaseGameLayer::init()) return false;
+        m_fields->current_rec_att = 1;
+        m_fields->best_percent = 0;
+        m_fields->n_att_count = 1;
+        return true;
+    }
+
     void trigger_clip() {
         Fields* f = m_fields.self();
         if (f->active) {
@@ -586,6 +594,7 @@ class $modify(MyPlayLayer, PlayLayer) {
         MyBaseGameLayer::Fields* f = bgl->m_fields.self();
         f->s_lvl_str = m_level->m_levelName;
         f->n_att_count = m_level->m_attempts;
+        f->current_rec_att = f->n_att_count;
         f->best_percent = m_level->m_normalPercent;
         int w = 0, h = 0;
         get_target_rec_size(w, h);
@@ -639,7 +648,7 @@ class $modify(MyPlayLayer, PlayLayer) {
         PlayLayer::destroyPlayer(boi, obj);
         auto bgl = static_cast<MyBaseGameLayer*>(static_cast<GJBaseGameLayer*>(this));
         auto f = bgl->m_fields.self();
-        if (!f || !f->clip_new_best || !m_player1 || !m_level) return;
+        if (!f || !f->clip_new_best || !m_player1 || !m_level || m_levelLength <= 0.f) return;
         int cur = (int)(m_player1->getPositionX() / m_levelLength * 100.f);
         if (cur <= f->best_percent) return;
         f->best_percent = cur;
