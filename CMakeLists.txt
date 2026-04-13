@@ -26,11 +26,18 @@ target_include_directories(${PROJECT_NAME} PRIVATE
 
 setup_geode_mod(${PROJECT_NAME})
 
-target_link_libraries(${PROJECT_NAME}
-    geode-sdk
-    ole32
-    dxgi
-)
+if (WIN32)
+    target_link_libraries(${PROJECT_NAME}
+        geode-sdk
+        ole32
+        dxgi
+    )
+else()
+    target_link_libraries(${PROJECT_NAME}
+        geode-sdk
+        EGL
+    )
+endif()
 
 file(GLOB PNG_RESOURCES CONFIGURE_DEPENDS
     "${CMAKE_CURRENT_SOURCE_DIR}/resources/*.png"
