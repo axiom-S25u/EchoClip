@@ -1,3 +1,11 @@
+<cy>v1.3.0</c>
+<cg>added android support</c>
+<cr>fixed redundant init hook</c>
+<cy>v1.2.32</c>
+<cg>added favorites, search, clip on new best</c>
+<cg>added codec fallback system</c>
+<cr>fixed various bugs</c>
+
 <cy>v1.2.0</c>
 <cg>added auto performance</c>
 <cr>fixed std::stoi</c> to prevent potential crashes

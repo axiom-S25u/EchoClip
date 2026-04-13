@@ -6,7 +6,7 @@
     },
     "id": "axiom.echoclip",
     "name": "EchoClip",
-    "version": "v1.2.32",
+    "version": "v1.3.1",
     "developer": "Axiom",
     "tags": ["utility", "enhancement"],
     "description": "record and save clips of your gameplay locally.",
@@ -38,14 +38,6 @@
             "default": 30,
             "min": 1,
             "max": 120
-        },
-        "bitrate": {
-            "name": "Bitrate (Mbps)",
-            "description": "the video quality. higher is better but uses more space.",
-            "type": "int",
-            "default": 12,
-            "min": 1,
-            "max": 35
         },
         "output-res": {
             "name": "Output Resolution",
@@ -84,7 +76,7 @@
             "description": "the key to manually save a clip (default F6).",
             "type": "keybind",
             "default": "F6",
-            "platforms": "win"
+            "platforms": ["win"]
         },
         "clip-on-new-best": {
             "name": "Clip on New Best",

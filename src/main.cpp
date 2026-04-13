@@ -95,8 +95,7 @@ int64_t get_total_ram_mb() {
     return 4096;
 }
 
-std::string get_codec() { // if 1 PERSON SAYS "android when" im banning them from my server
-    // this is NEVER comming to other platforms.. maybe, ok but the only one thta could maybe work is mocos
+std::string get_codec() {
     static std::string cached_codec = "";
     if (!cached_codec.empty()) return cached_codec;
 #ifdef GEODE_IS_ANDROID
@@ -119,7 +118,7 @@ std::string get_codec() { // if 1 PERSON SAYS "android when" im banning them fro
     else if (vStr.find("amd") != std::string::npos || vStr.find("ati") != std::string::npos || vStr.find("advanced micro") != std::string::npos) cached_codec = "h264_amf";
     else if (vStr.find("intel") != std::string::npos) cached_codec = "h264_qsv";
     else cached_codec = "libx264";
-    return cached_codec;
+    return cached_codec;// as a note, while testing on a shit pc it saw an nvidia gpu but it wouldnt work so uhm if it didnt work i made it use libx, this is waht happens when u dont think of old ass hardware
 }
 
 void cleanup_temp_folder() {
@@ -778,10 +777,30 @@ class $modify(MyPauseLayer, PauseLayer) {
         auto btn = CCMenuItemSpriteExtra::create(spr, nullptr, this, menu_selector(MyPauseLayer::onGallery));
         btn->setID("gallery-btn"_spr);
         menu->addChild(btn);
+
+#ifdef GEODE_IS_ANDROID
+        auto clip_spr = CCSprite::create("logo.png"_spr);
+        if (!clip_spr) clip_spr = CCSprite::createWithSpriteFrameName("GJ_completesIcon_001.png");
+        clip_spr->setScale(0.5f);
+        auto clip_btn = CCMenuItemSpriteExtra::create(clip_spr, nullptr, this, menu_selector(MyPauseLayer::onClip));
+        clip_btn->setID("clip-btn"_spr);
+        menu->addChild(clip_btn); // tung tung tung sahur
+#endif
+
         menu->updateLayout();
     }
 
     void onGallery(CCObject*) {
         Gallery::open();
     }
+
+#ifdef GEODE_IS_ANDROID
+    void onClip(CCObject*) {
+        if (!Mod::get()->getSettingValue<bool>("enabled")) return;
+        this->onResume(nullptr);
+        if (auto bgl = GJBaseGameLayer::get()) {
+            static_cast<MyBaseGameLayer*>(bgl)->trigger_clip();
+        }
+    }
+#endif
 };
