@@ -241,7 +241,9 @@ bool Gallery::init() {
     p_bottom_menu->setLayout(RowLayout::create()->setGap(8)->setAxisAlignment(AxisAlignment::Center)); 
     p_MainPanel->addChild(p_bottom_menu, 10);
     
+#ifndef GEODE_IS_ANDROID
     p_bottom_menu->addChild(CCMenuItemSpriteExtra::create(ButtonSprite::create("Folder", "goldFont.fnt", "GJ_button_04.png", 0.6f), nullptr, this, menu_selector(Gallery::onFolder)));
+#endif
     p_bottom_menu->addChild(CCMenuItemSpriteExtra::create(ButtonSprite::create("Settings", "goldFont.fnt", "GJ_button_04.png", 0.6f), nullptr, this, menu_selector(Gallery::onSettings)));
     p_bottom_menu->addChild(CCMenuItemSpriteExtra::create(ButtonSprite::create("Clear All", "goldFont.fnt", "GJ_button_06.png", 0.6f), nullptr, this, menu_selector(Gallery::onClear)));
     p_bottom_menu->updateLayout();
@@ -337,7 +339,7 @@ void Gallery::build() {
         }
 
         float card_w = (f_w_in - pad_val) / 2;
-        auto box = Card::create(clip, card_w, card_h);
+        Card* box = Card::create(clip, card_w, card_h);
         float x = (row_in_group % 2) * (card_w + pad_val);
         float y = cur_y - (row_in_group / 2 + 1) * (card_h + pad_val) + pad_val;
         box->setPosition({x, y});
@@ -393,7 +395,6 @@ void Gallery::load() {
         return fs::last_write_time(a.p_path, ec1) > fs::last_write_time(b.p_path, ec2); 
     });
 }
-
 
 void Gallery::onFolder(CCObject*) {
     geode::utils::file::openFolder(Mod::get()->getSaveDir() / "clips");

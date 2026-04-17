@@ -32,10 +32,14 @@ if (WIN32)
         ole32
         dxgi
     )
-else()
+elseif (ANDROID)
     target_link_libraries(${PROJECT_NAME}
         geode-sdk
         EGL
+    )
+else()
+    target_link_libraries(${PROJECT_NAME}
+        geode-sdk
     )
 endif()
 

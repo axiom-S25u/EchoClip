@@ -5,6 +5,7 @@
 #include <Geode/modify/LevelEditorLayer.hpp>
 #include <Geode/modify/CCEGLView.hpp>
 #include <Geode/modify/PauseLayer.hpp>
+#include <Geode/modify/MenuLayer.hpp>
 #include <eclipse.ffmpeg-api/include/events.hpp>
 #include <Geode/utils/async.hpp>
 #include <Geode/utils/string.hpp>
@@ -24,17 +25,13 @@
 #include <shellapi.h>
 #endif
 
-#ifdef GEODE_IS_ANDROID
-#include <fstream>
-#include <sys/sysinfo.h>
-#include <EGL/egl.h>
-typedef void (*PFNGLBLITFRAMEBUFFERPROC)(int,int,int,int,int,int,int,int,unsigned int,unsigned int);
-static PFNGLBLITFRAMEBUFFERPROC s_glBlitFramebuffer = nullptr;
-static void ensureBlitFramebuffer() {
-    if (!s_glBlitFramebuffer)
-        s_glBlitFramebuffer = (PFNGLBLITFRAMEBUFFERPROC)eglGetProcAddress("glBlitFramebuffer");
-}
-#define glBlitFramebuffer(...) (ensureBlitFramebuffer(), s_glBlitFramebuffer(__VA_ARGS__))
+#ifdef GEODE_IS_MACOS
+#include <sys/types.h>
+#include <sys/sysctl.h>
+#endif
+
+#ifndef GL_MAP_READ_BIT
+#define GL_MAP_READ_BIT 0x0001
 #endif
 
 using namespace geode::prelude;
@@ -88,9 +85,11 @@ int64_t get_total_ram_mb() {
 #ifdef GEODE_IS_WINDOWS
     MEMORYSTATUSEX s; s.dwLength = sizeof(s);
     if (GlobalMemoryStatusEx(&s)) return (int64_t)(s.ullTotalPhys / (1024 * 1024));
-#elif defined(GEODE_IS_ANDROID)
-    struct sysinfo si;
-    if (sysinfo(&si) == 0) return (int64_t)(si.totalram * si.mem_unit / (1024 * 1024));
+#elif defined(GEODE_IS_MACOS)
+    int64_t mem = 0;
+    size_t len = sizeof(mem);
+    ::sysctlbyname("hw.memsize", &mem, &len, nullptr, 0);
+    return mem / (1024 * 1024);
 #endif
     return 4096;
 }
@@ -98,9 +97,8 @@ int64_t get_total_ram_mb() {
 std::string get_codec() {
     static std::string cached_codec = "";
     if (!cached_codec.empty()) return cached_codec;
-#ifdef GEODE_IS_ANDROID
-    // h264_mediacodec uses the hardware encoder on android, much better than libx264
-    cached_codec = "h264_mediacodec";
+#ifdef GEODE_IS_MACOS
+    cached_codec = "h264_videotoolbox";
     return cached_codec;
 #endif
     char* sz_vendor_ptr = (char*)glGetString(GL_VENDOR);
@@ -210,10 +208,32 @@ void save_clip(fs::path srcPath, std::string sLvlName, int nAttempts) {
                 if (!ec) success = true;
             }
         }
-#else
-        // on android just move the file directly, no re-encoding needed
-        fs::rename(srcPath, out_file_path, ec);
-        if (!ec) success = true;
+#elif defined(GEODE_IS_MACOS)
+        fs::path tmp_out = Mod::get()->getSaveDir() / "temp" / fmt::format("_tmp_{}_{}.mp4", (long long)::time(0), rand() % 1000);
+
+        std::string codec = get_codec();
+        std::string ff_bin;
+        auto ffmpegMod = Loader::get()->getLoadedMod("eclipse.ffmpeg-api");
+        if (ffmpegMod) {
+            auto path = ffmpegMod->getResourcesDir() / "ffmpeg";
+            if (fs::exists(path, ec)) ff_bin = "\"" + geode::utils::string::pathToString(path) + "\"";
+        }
+
+        if (ff_bin.empty()) {
+            fs::rename(srcPath, out_file_path, ec);
+            if (!ec) success = true;
+        } else {
+            std::string ff_cmd = fmt::format("{} -y -i \"{}\" -metadata title=\"EchoClip\" -c:v {} -crf 23 -pix_fmt yuv420p -movflags +faststart \"{}\" &",
+                ff_bin, geode::utils::string::pathToString(srcPath), codec, geode::utils::string::pathToString(tmp_out));
+            system(ff_cmd.c_str());
+            if (fs::exists(tmp_out, ec)) {
+                fs::remove(srcPath, ec); fs::rename(tmp_out, out_file_path, ec);
+                if (!ec) success = true;
+            } else {
+                fs::rename(srcPath, out_file_path, ec);
+                if (!ec) success = true;
+            }
+        }
 #endif
 
         int64_t max_days = Mod::get()->getSettingValue<int64_t>("cleanup-days");
@@ -332,11 +352,10 @@ class $modify(MyBaseGameLayer, GJBaseGameLayer) {
         int n_att_count = 1, best_percent = 0;
         float f_timer_val = 0;
 
-#ifndef GEODE_IS_ANDROID
         GLuint pbo_bufer[3] = {0, 0, 0};
         GLsync fences_sync_ptr[3] = {0, 0, 0};
         int write_idx = 0;
-#endif
+
         int n_pushed_frames = 0;
         bool b_setup_done = false;
         bool b_capture_this_frame = false;
@@ -350,9 +369,7 @@ class $modify(MyBaseGameLayer, GJBaseGameLayer) {
 
         ~Fields() {
             if (session) { session->dead = true; session->m_cv.notify_all(); }
-#ifndef GEODE_IS_ANDROID
             for (int i = 0; i < 3; i++) if (fences_sync_ptr[i]) { glDeleteSync(fences_sync_ptr[i]); fences_sync_ptr[i] = 0; }
-#endif
             if (downscale_fbo) glDeleteFramebuffers(1, &downscale_fbo);
             if (downscale_tex) glDeleteTextures(1, &downscale_tex);
         }
@@ -365,7 +382,7 @@ class $modify(MyBaseGameLayer, GJBaseGameLayer) {
             geode::log::warn("trigger_clip called but not active");
             return;
         }
-        auto s = kill_rec();
+        std::shared_ptr<RecSession> s = kill_rec();
         if (s) {
             finalize_and_save(s, f->s_lvl_str, f->current_rec_att);
             int w = 0, h = 0;
@@ -405,18 +422,14 @@ class $modify(MyBaseGameLayer, GJBaseGameLayer) {
         ffmpeg::events::Recorder* p_rec = nullptr;
         std::string working_codec = "";
 
-        for (auto const& codec : codecs_to_try) {
+        for (std::string const& codec : codecs_to_try) {
             ffmpeg::RenderSettings config;
             config.m_height = recH; config.m_width = recW;
             config.m_fps = (uint16_t)Mod::get()->getSettingValue<int64_t>("target-fps");
             config.m_bitrate = 15000000;
             config.m_outputFile = temp_p;
             config.m_codec = codec;
-#ifdef GEODE_IS_ANDROID
-            config.m_pixelFormat = ffmpeg::PixelFormat::RGBA;
-#else
             config.m_pixelFormat = ffmpeg::PixelFormat::BGRA;
-#endif
             config.m_doVerticalFlip = true;
 
             ffmpeg::events::Recorder* candidate = new ffmpeg::events::Recorder();
@@ -441,7 +454,7 @@ class $modify(MyBaseGameLayer, GJBaseGameLayer) {
             });
         }
 
-        auto s = std::make_shared<RecSession>();
+        std::shared_ptr<RecSession> s = std::make_shared<RecSession>();
         s->rec = p_rec; s->max_frames = max_f; s->temp_file_p = temp_p;
         m_fields->session = s;
         m_fields->nW = recW; m_fields->nH = recH;
@@ -498,7 +511,7 @@ class $modify(MyBaseGameLayer, GJBaseGameLayer) {
     std::shared_ptr<RecSession> kill_rec() {
         if (!m_fields->active || !m_fields->session) return nullptr;
         m_fields->active = false;
-        auto s = m_fields->session;
+        std::shared_ptr<RecSession> s = m_fields->session;
         m_fields->session = nullptr;
         s->dead = true; s->m_cv.notify_all();
         return s;
@@ -506,10 +519,8 @@ class $modify(MyBaseGameLayer, GJBaseGameLayer) {
 
     void cleanup_gl() {
         if (!m_fields->b_setup_done) return;
-#ifndef GEODE_IS_ANDROID
         glDeleteBuffers(3, m_fields->pbo_bufer);
         for (int i = 0; i < 3; i++) if (m_fields->fences_sync_ptr[i]) { glDeleteSync(m_fields->fences_sync_ptr[i]); m_fields->fences_sync_ptr[i] = 0; }
-#endif
         m_fields->b_setup_done = false;
     }
 
@@ -517,7 +528,7 @@ class $modify(MyBaseGameLayer, GJBaseGameLayer) {
         GJBaseGameLayer::update(dt);
         Fields* f = m_fields.self();
         if (!f->active || !f->session) return;
-        auto s = f->session;
+        std::shared_ptr<RecSession> s = f->session;
 
         f->f_timer_val += dt;
         while (f->f_timer_val >= f->gap_cache) {
@@ -531,7 +542,6 @@ class $modify(MyBaseGameLayer, GJBaseGameLayer) {
 
 $execute {
     cleanup_temp_folder();
-#if defined(GEODE_IS_WINDOWS) || defined(GEODE_IS_MACOS)
     listenForKeybindSettingPresses("clip-keybind", [](geode::Keybind const&, bool down, bool repeat, double) {
         if (down && !repeat) {
             if (Mod::get()->getSettingValue<bool>("enabled")) {
@@ -541,56 +551,22 @@ $execute {
             }
         }
     });
-#endif
 }
 
 class $modify(MyCCEGLView, CCEGLView) {
     void swapBuffers() {
         auto layer = GJBaseGameLayer::get();
         if (layer) {
-            auto f = static_cast<MyBaseGameLayer*>(layer)->m_fields.self();
+            MyBaseGameLayer::Fields* f = static_cast<MyBaseGameLayer*>(layer)->m_fields.self();
             if (f->active && f->session && f->b_capture_this_frame) {
-                auto s = f->session;
+                std::shared_ptr<RecSession> s = f->session;
                 f->b_capture_this_frame = false;
                 int recW = f->nW; int recH = f->nH;
                 int sz_bytes = recW * recH * 4;
 
-                auto fs = CCDirector::get()->getOpenGLView()->getFrameSize();
-                int winW = (int)fs.width; int winH = (int)fs.height;
+                CCSize fs2 = CCDirector::get()->getOpenGLView()->getFrameSize();
+                int winW = (int)fs2.width; int winH = (int)fs2.height;
 
-#ifdef GEODE_IS_ANDROID
-                // OpenGL ES 2.0, fuck PBO's, fuck sync objects, used glReadPixels
-                #define GL_READ_FRAMEBUFFER 0x8CA8
-                #define GL_DRAW_FRAMEBUFFER 0x8CA9
-                if (winW != recW || winH != recH) {
-                    glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
-                    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, f->downscale_fbo);
-                    glBlitFramebuffer(0, 0, winW, winH, 0, 0, recW, recH, GL_COLOR_BUFFER_BIT, GL_LINEAR);
-                    glBindFramebuffer(GL_READ_FRAMEBUFFER, f->downscale_fbo);
-                } else {
-                    glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
-                }
-                std::vector<uint8_t> c_pixel;
-                {
-                    std::lock_guard<std::mutex> l(s->m_p_mtx);
-                    if (!s->pool_frames.empty()) { c_pixel = std::move(s->pool_frames.back()); s->pool_frames.pop_back(); }
-                }
-                if (c_pixel.size() != (size_t)sz_bytes) c_pixel.resize(sz_bytes);
-                // GL_BGRA may not be available on ES, use GL_RGBA
-                glReadPixels(0, 0, recW, recH, GL_RGBA, GL_UNSIGNED_BYTE, c_pixel.data());
-                glBindFramebuffer(GL_FRAMEBUFFER, 0);
-                {
-                    std::lock_guard<std::mutex> lp(s->m_p_mtx);
-                    std::lock_guard<std::mutex> lq(s->m_q_mtx);
-                    if ((int)s->c_pixel_q.size() < s->max_frames) {
-                        s->c_pixel_q.push(std::move(c_pixel));
-                        s->m_cv.notify_one();
-                    } else if ((int)s->pool_frames.size() < s->max_frames) {
-                        s->pool_frames.push_back(std::move(c_pixel));
-                    }
-                }
-#else
-                // Desktop OpenGL - full async triple-PBO path
                 if (!f->b_setup_done) {
                     glGenBuffers(3, f->pbo_bufer);
                     for (int i = 0; i < 3; i++) {
@@ -627,14 +603,18 @@ class $modify(MyCCEGLView, CCEGLView) {
                     if (signaled == GL_SIGNALED) {
                         glDeleteSync(f->fences_sync_ptr[readIdx]); f->fences_sync_ptr[readIdx] = 0;
                         glBindBuffer(GL_PIXEL_PACK_BUFFER, f->pbo_bufer[readIdx]);
+#ifdef GEODE_IS_MACOS
+                        void* p_pix = glMapBuffer(GL_PIXEL_PACK_BUFFER, GL_READ_ONLY);
+#else
                         void* p_pix = glMapBufferRange(GL_PIXEL_PACK_BUFFER, 0, sz_bytes, GL_MAP_READ_BIT);
+#endif
                         if (p_pix) {
                             std::vector<uint8_t> c_pixel;
                             {
                                 std::lock_guard<std::mutex> l(s->m_p_mtx);
                                 if (!s->pool_frames.empty()) { c_pixel = std::move(s->pool_frames.back()); s->pool_frames.pop_back(); }
                             }
-                            if (c_pixel.size() != (size_t)sz_bytes) c_pixel.resize(sz_bytes);
+                            if ((int)c_pixel.size() != sz_bytes) c_pixel.resize(sz_bytes);
                             memcpy(c_pixel.data(), p_pix, sz_bytes);
                             glUnmapBuffer(GL_PIXEL_PACK_BUFFER);
 
@@ -651,7 +631,6 @@ class $modify(MyCCEGLView, CCEGLView) {
                 }
                 glBindFramebuffer(GL_FRAMEBUFFER, 0);
                 glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
-#endif
             }
         }
         CCEGLView::swapBuffers();
@@ -684,7 +663,7 @@ class $modify(MyPlayLayer, PlayLayer) {
             Notification::create(fmt::format("Encoder: {}", get_codec()), CCSprite::createWithSpriteFrameName("GJ_infoIcon_001.png"))->show();
         }
 
-        auto bgl = static_cast<MyBaseGameLayer*>(static_cast<GJBaseGameLayer*>(this));
+        MyBaseGameLayer* bgl = static_cast<MyBaseGameLayer*>(static_cast<GJBaseGameLayer*>(this));
         MyBaseGameLayer::Fields* f = bgl->m_fields.self();
         f->s_lvl_str = m_level->m_levelName;
         f->n_att_count = m_level->m_attempts;
@@ -697,7 +676,7 @@ class $modify(MyPlayLayer, PlayLayer) {
 
     void togglePracticeMode(bool practice) {
         PlayLayer::togglePracticeMode(practice);
-        auto bgl = static_cast<MyBaseGameLayer*>(static_cast<GJBaseGameLayer*>(this));
+        MyBaseGameLayer* bgl = static_cast<MyBaseGameLayer*>(static_cast<GJBaseGameLayer*>(this));
         if (practice && !Mod::get()->getSettingValue<bool>("record-practice")) {
             bgl->kill_rec();
         } else if (!practice && Mod::get()->getSettingValue<bool>("enabled")) {
@@ -709,8 +688,8 @@ class $modify(MyPlayLayer, PlayLayer) {
 
     void resetLevel() {
         PlayLayer::resetLevel();
-        auto bgl = static_cast<MyBaseGameLayer*>(static_cast<GJBaseGameLayer*>(this));
-        auto f = bgl->m_fields.self();
+        MyBaseGameLayer* bgl = static_cast<MyBaseGameLayer*>(static_cast<GJBaseGameLayer*>(this));
+        MyBaseGameLayer::Fields* f = bgl->m_fields.self();
         if (!f) return;
 
         f->n_att_count = m_level ? m_level->m_attempts : 0;
@@ -726,10 +705,10 @@ class $modify(MyPlayLayer, PlayLayer) {
 
     void levelComplete() {
         PlayLayer::levelComplete();
-        auto bgl = static_cast<MyBaseGameLayer*>(static_cast<GJBaseGameLayer*>(this));
-        auto f = bgl->m_fields.self();
+        MyBaseGameLayer* bgl = static_cast<MyBaseGameLayer*>(static_cast<GJBaseGameLayer*>(this));
+        MyBaseGameLayer::Fields* f = bgl->m_fields.self();
         if (!f || !m_level) return;
-        auto s = bgl->kill_rec();
+        std::shared_ptr<RecSession> s = bgl->kill_rec();
         if (s) {
             finalize_and_save(s, f->s_lvl_str, f->current_rec_att);
             int w = 0, h = 0;
@@ -740,13 +719,13 @@ class $modify(MyPlayLayer, PlayLayer) {
 
     void destroyPlayer(PlayerObject* boi, GameObject* obj) {
         PlayLayer::destroyPlayer(boi, obj);
-        auto bgl = static_cast<MyBaseGameLayer*>(static_cast<GJBaseGameLayer*>(this));
-        auto f = bgl->m_fields.self();
+        MyBaseGameLayer* bgl = static_cast<MyBaseGameLayer*>(static_cast<GJBaseGameLayer*>(this));
+        MyBaseGameLayer::Fields* f = bgl->m_fields.self();
         if (!f || !f->clip_new_best || !m_player1 || !m_level) return;
         int cur = (int)this->getCurrentPercent();
         if (cur <= f->best_percent) return;
         f->best_percent = cur;
-        auto s = bgl->kill_rec();
+        std::shared_ptr<RecSession> s = bgl->kill_rec();
         if (s) {
             finalize_and_save(s, f->s_lvl_str, f->current_rec_att);
             int w = 0, h = 0;
@@ -757,7 +736,7 @@ class $modify(MyPlayLayer, PlayLayer) {
 
     void onExit() {
         PlayLayer::onExit();
-        auto bgl = static_cast<MyBaseGameLayer*>(static_cast<GJBaseGameLayer*>(this));
+        MyBaseGameLayer* bgl = static_cast<MyBaseGameLayer*>(static_cast<GJBaseGameLayer*>(this));
         bgl->kill_rec();
         bgl->cleanup_gl();
     }
@@ -770,37 +749,17 @@ class $modify(MyPauseLayer, PauseLayer) {
         if (!menu) menu = getChildByID("left-button-menu");
         if (!menu) return;
 
-        auto spr = CCSprite::create("gallery.png"_spr);
+        CCSprite* spr = CCSprite::create("gallery.png"_spr);
         if (!spr) spr = CCSprite::createWithSpriteFrameName("GJ_playBtn2_001.png");
-        spr->setScale(0.5f);
+        spr->setScale(0.35f);
 
-        auto btn = CCMenuItemSpriteExtra::create(spr, nullptr, this, menu_selector(MyPauseLayer::onGallery));
+        CCMenuItemSpriteExtra* btn = CCMenuItemSpriteExtra::create(spr, nullptr, this, menu_selector(MyPauseLayer::onGallery));
         btn->setID("gallery-btn"_spr);
         menu->addChild(btn);
-
-#ifdef GEODE_IS_ANDROID
-        auto clip_spr = CCSprite::create("logo.png"_spr);
-        if (!clip_spr) clip_spr = CCSprite::createWithSpriteFrameName("GJ_completesIcon_001.png");
-        clip_spr->setScale(0.5f);
-        auto clip_btn = CCMenuItemSpriteExtra::create(clip_spr, nullptr, this, menu_selector(MyPauseLayer::onClip));
-        clip_btn->setID("clip-btn"_spr);
-        menu->addChild(clip_btn); // tung tung tung sahur
-#endif
-
         menu->updateLayout();
     }
 
     void onGallery(CCObject*) {
         Gallery::open();
     }
-
-#ifdef GEODE_IS_ANDROID
-    void onClip(CCObject*) {
-        if (!Mod::get()->getSettingValue<bool>("enabled")) return;
-        this->onResume(nullptr);
-        if (auto bgl = GJBaseGameLayer::get()) {
-            static_cast<MyBaseGameLayer*>(bgl)->trigger_clip();
-        }
-    }
-#endif
 };

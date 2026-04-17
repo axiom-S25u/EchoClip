@@ -2,7 +2,8 @@
     "geode": "5.0.1",
     "gd": {
         "win": "2.2081",
-        "android": "2.2081"
+        "android": "2.2081",
+        "mac": "2.2081"
     },
     "id": "axiom.echoclip",
     "name": "EchoClip",
@@ -15,7 +16,7 @@
         "community": "https://discord.gg/TWn99qzmUA"
     },
     "resources": {
-        "files": [
+        "sprites": [
             "resources/gallery.png",
             "resources/fav.png",
             "resources/logo.png"
@@ -63,20 +64,12 @@
             "min": 1,
             "max": 1000
         },
-        "att-clip-count": {
-            "name": "Attempts to Clip",
-            "description": "how many attempts back the clip should go (for the hotkey).",
-            "type": "int",
-            "default": 1,
-            "min": 1,
-            "max": 20
-        },
         "clip-keybind": {
             "name": "Clip Hotkey",
             "description": "the key to manually save a clip (default F6).",
             "type": "keybind",
             "default": "F6",
-            "platforms": ["win"]
+            "platforms": ["win", "mac"]
         },
         "clip-on-new-best": {
             "name": "Clip on New Best",
