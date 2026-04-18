@@ -4,7 +4,6 @@ background recorder for GD that actually <cg>works</cg>.
 ### why use this?
 *   **no lag:** uses your gpu to do the heavy lifting.
 *   **no ram bloat:** saves video straight to your disk.
-*   **mic support:** actually records your voice so people can hear you yell at the game.
 
 ### stuff it has
 *   720p 30fps, and more (good enough so u can send ur things on discord)
