@@ -7,9 +7,12 @@
 #include <Geode/modify/PauseLayer.hpp>
 #include <Geode/modify/MenuLayer.hpp>
 #include <eclipse.ffmpeg-api/include/events.hpp>
-#include <Geode/utils/async.hpp>
 #include <Geode/utils/string.hpp>
+#include "common/common.hpp"
+#include "win/win.hpp"
+#include "mac/mac.hpp"
 #include "ui.hpp"
+#include <atomic>
 #include <queue>
 #include <mutex>
 #include <condition_variable>
@@ -17,18 +20,6 @@
 #include <thread>
 #include <cstdlib>
 #include <ctime>
-
-#ifdef GEODE_IS_WINDOWS
-#define WIN32_LEAN_AND_MEAN
-#include <windows.h>
-#include <dxgi.h>
-#include <shellapi.h>
-#endif
-
-#ifdef GEODE_IS_MACOS
-#include <sys/types.h>
-#include <sys/sysctl.h>
-#endif
 
 #ifndef GL_MAP_READ_BIT
 #define GL_MAP_READ_BIT 0x0001
@@ -39,253 +30,6 @@ namespace fs = std::filesystem;
 
 // axiom was here
 // i hate this project so much why did i start this, at least it has features now
-double get_time_val() {
-    return std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
-}
-
-bool check_vram_low() { // i know someonme will complain about low fps so i added this
-#ifdef GEODE_IS_WINDOWS
-    static int vram_mb = -1;
-    if (vram_mb == -1) {
-        IDXGIFactory* f; if (FAILED(CreateDXGIFactory(__uuidof(IDXGIFactory), (void**)&f))) return false;
-        IDXGIAdapter* a; if (FAILED(f->EnumAdapters(0, &a))) { f->Release(); return false; }
-        DXGI_ADAPTER_DESC d; a->GetDesc(&d);
-        vram_mb = (int)(d.DedicatedVideoMemory / (1024 * 1024));
-        a->Release(); f->Release();
-    }
-    return vram_mb < 2048; // lowered this because 6gb was crazy lol, wait but if someone is on an igpu, dont they have like 256mb or smh? meh not my problem
-#endif
-    return false;
-}
-
-bool check_cpu_bad() {
-    static int cores = std::thread::hardware_concurrency();
-    return cores < 4; // bro if u have < 4 cores in 2026 just give up
-}
-
-bool is_running_under_wine() {
-#ifdef GEODE_IS_WINDOWS
-    static int cached_result = -1;
-    if (cached_result != -1) return (bool)cached_result;
-
-    HMODULE ntdll = GetModuleHandleA("ntdll.dll");
-    if (ntdll && GetProcAddress(ntdll, "wine_get_version")) {
-        cached_result = 1;
-        return true;
-    }
-
-    cached_result = 0;
-    return false;
-#else
-    return false;
-#endif
-}
-
-int64_t get_total_ram_mb() {
-#ifdef GEODE_IS_WINDOWS
-    MEMORYSTATUSEX s; s.dwLength = sizeof(s);
-    if (GlobalMemoryStatusEx(&s)) return (int64_t)(s.ullTotalPhys / (1024 * 1024));
-#elif defined(GEODE_IS_MACOS)
-    int64_t mem = 0;
-    size_t len = sizeof(mem);
-    ::sysctlbyname("hw.memsize", &mem, &len, nullptr, 0);
-    return mem / (1024 * 1024);
-#endif
-    return 4096;
-}
-
-std::string get_codec() {
-    static std::string cached_codec = "";
-    if (!cached_codec.empty()) return cached_codec;
-#ifdef GEODE_IS_MACOS
-    cached_codec = "h264_videotoolbox";
-    return cached_codec;
-#endif
-    char* sz_vendor_ptr = (char*)glGetString(GL_VENDOR);
-    if (!sz_vendor_ptr) return "libx264";
-    std::string vStr = sz_vendor_ptr ? geode::utils::string::toLower(sz_vendor_ptr) : "";
-
-    //wine fallbaclk
-    if (is_running_under_wine()) {
-        geode::log::info("wine detected!!!!!!");
-        cached_codec = "libx264";
-        return cached_codec;
-    }
-
-    if (vStr.find("nvidia") != std::string::npos) cached_codec = "h264_nvenc";
-    else if (vStr.find("amd") != std::string::npos || vStr.find("ati") != std::string::npos || vStr.find("advanced micro") != std::string::npos) cached_codec = "h264_amf";
-    else if (vStr.find("intel") != std::string::npos) cached_codec = "h264_qsv";
-    else cached_codec = "libx264";
-    return cached_codec;// as a note, while testing on a shit pc it saw an nvidia gpu but it wouldnt work so uhm if it didnt work i made it use libx, this is waht happens when u dont think of old ass hardware
-}
-
-void cleanup_temp_folder() {
-    std::error_code ec;
-    fs::path temp_dir = Mod::get()->getSaveDir() / "temp";
-    if (fs::exists(temp_dir, ec)) {
-        for (auto const& entry : fs::directory_iterator(temp_dir, ec)) {
-            fs::remove(entry.path(), ec);
-        }
-    }
-}
-
-static void get_target_rec_size(int& outW, int& outH) {
-    std::string outputRes = Mod::get()->getSettingValue<std::string>("output-res");
-    int targetH = 720;
-    if (outputRes == "480p") targetH = 480;
-    else if (outputRes == "720p") targetH = 720;
-    else if (outputRes == "1080p") targetH = 1080;
-    else if (outputRes == "1440p") targetH = 1440;
-
-    float userScale = (float)Mod::get()->getSettingValue<int64_t>("recording-scale") / 100.0f;
-    targetH = (int)(targetH * userScale);
-
-    int targetW = (int)(targetH * 16.0f / 9.0f);
-
-    if (Mod::get()->getSettingValue<bool>("auto-performance")) {
-        if (check_cpu_bad() || check_vram_low()) {
-            targetW = (int)(targetW * 0.8f);
-            targetH = (int)(targetH * 0.8f);
-        }
-    }
-
-    targetW &= ~1;
-    targetH &= ~1;
-
-    outW = targetW;
-    outH = targetH;
-}
-
-void save_clip(fs::path srcPath, std::string sLvlName, int nAttempts) {
-    std::error_code ec;
-    if (srcPath.empty() || !fs::exists(srcPath, ec)) return;
-    geode::async::spawn([srcPath, sLvlName, nAttempts]() -> arc::Future<> {
-        std::error_code ec;
-        fs::path p_root_clips = Mod::get()->getSaveDir() / "clips";
-
-        std::string clean_name = sLvlName;
-        if (clean_name.empty()) clean_name = "Unknown";
-        for (char& c : clean_name)
-            if (c == '/' || c == '\\' || c == ':' || c == '*' || c == '?' || c == '"' || c == '<' || c == '>' || c == '|') c = '_';
-        if (clean_name.size() > 80) clean_name = clean_name.substr(0, 80);
-
-        fs::path p_lvl_dir = p_root_clips / clean_name;
-        fs::create_directories(p_lvl_dir, ec);
-
-        fs::path out_file_path = p_lvl_dir / fmt::format("{}_att{}_{}.mp4", clean_name, nAttempts, (long long)::time(0));
-
-        bool success = false;
-#ifdef GEODE_IS_WINDOWS
-        fs::path tmp_out = Mod::get()->getSaveDir() / "temp" / fmt::format("_tmp_{}_{}.mp4", (long long)::time(0), rand() % 1000);
-
-        std::string codec = get_codec();
-        std::string ff_bin;
-        auto ffmpegMod = Loader::get()->getLoadedMod("eclipse.ffmpeg-api");
-        if (ffmpegMod) {
-            auto path = ffmpegMod->getResourcesDir() / "ffmpeg.exe";
-            if (fs::exists(path, ec)) ff_bin = "\"" + geode::utils::string::pathToString(path) + "\"";
-        }
-
-        if (ff_bin.empty()) {
-            fs::rename(srcPath, out_file_path, ec);
-            if (!ec) success = true;
-        } else {
-            std::string ff_cmd = fmt::format("{} -y -i \"{}\" -metadata title=\"EchoClip\" -c:v {} -preset medium -crf 23 -pix_fmt yuv420p -movflags +faststart \"{}\"",
-                ff_bin, geode::utils::string::pathToString(srcPath), codec, geode::utils::string::pathToString(tmp_out));
-
-            STARTUPINFOA si = { sizeof(si) };
-            PROCESS_INFORMATION pi = {};
-            std::vector<char> buf(ff_cmd.begin(), ff_cmd.end()); buf.push_back(0);
-            if (CreateProcessA(NULL, buf.data(), NULL, NULL, FALSE, CREATE_NO_WINDOW, NULL, NULL, &si, &pi)) {
-                WaitForSingleObject(pi.hProcess, INFINITE);
-                CloseHandle(pi.hProcess); CloseHandle(pi.hThread);
-            }
-            if (fs::exists(tmp_out, ec)) {
-                fs::remove(srcPath, ec); fs::rename(tmp_out, out_file_path, ec);
-                if (!ec) success = true;
-            } else {
-                fs::rename(srcPath, out_file_path, ec);
-                if (!ec) success = true;
-            }
-        }
-#elif defined(GEODE_IS_MACOS)
-        fs::path tmp_out = Mod::get()->getSaveDir() / "temp" / fmt::format("_tmp_{}_{}.mp4", (long long)::time(0), rand() % 1000);
-
-        std::string codec = get_codec();
-        std::string ff_bin;
-        auto ffmpegMod = Loader::get()->getLoadedMod("eclipse.ffmpeg-api");
-        if (ffmpegMod) {
-            auto path = ffmpegMod->getResourcesDir() / "ffmpeg";
-            if (fs::exists(path, ec)) ff_bin = "\"" + geode::utils::string::pathToString(path) + "\"";
-        }
-
-        if (ff_bin.empty()) {
-            fs::rename(srcPath, out_file_path, ec);
-            if (!ec) success = true;
-        } else {
-            std::string ff_cmd = fmt::format("{} -y -i \"{}\" -metadata title=\"EchoClip\" -c:v {} -crf 23 -pix_fmt yuv420p -movflags +faststart \"{}\" &",
-                ff_bin, geode::utils::string::pathToString(srcPath), codec, geode::utils::string::pathToString(tmp_out));
-            system(ff_cmd.c_str());
-            if (fs::exists(tmp_out, ec)) {
-                fs::remove(srcPath, ec); fs::rename(tmp_out, out_file_path, ec);
-                if (!ec) success = true;
-            } else {
-                fs::rename(srcPath, out_file_path, ec);
-                if (!ec) success = true;
-            }
-        }
-#endif
-
-        int64_t max_days = Mod::get()->getSettingValue<int64_t>("cleanup-days");
-        uintmax_t max_bytes = (uintmax_t)Mod::get()->getSettingValue<int64_t>("storage-limit") * 1024 * 1024 * 1024;
-
-        std::vector<fs::path> vFiles;
-        auto now_sys = std::chrono::system_clock::now();
-
-        for (auto const& dir_entry : fs::recursive_directory_iterator(p_root_clips, ec)) {
-            if (ec) break;
-            if (dir_entry.is_regular_file() && (dir_entry.path().extension() == ".mp4" || dir_entry.path().extension() == ".mkv")) {
-                std::string rel = geode::utils::string::pathToString(fs::relative(dir_entry.path(), p_root_clips, ec));
-                if (rel.find("favorites") != std::string::npos) continue;
-
-                if (max_days > 0) {
-                    auto ftime = fs::last_write_time(dir_entry.path(), ec);
-                    auto sclock = std::chrono::time_point_cast<std::chrono::system_clock::duration>(ftime - fs::file_time_type::clock::now() + std::chrono::system_clock::now());
-                    auto diff_hours = std::chrono::duration_cast<std::chrono::hours>(now_sys - sclock).count();
-                    if (diff_hours > max_days * 24) {
-                        fs::remove(dir_entry.path(), ec);
-                        continue;
-                    }
-                }
-                vFiles.push_back(dir_entry.path());
-            }
-        }
-
-        std::sort(vFiles.begin(), vFiles.end(), [](fs::path a, fs::path b) {
-            std::error_code e1, e2;
-            return fs::last_write_time(a, e1) < fs::last_write_time(b, e2);
-        });
-
-        uintmax_t nTotal = 0;
-        for (auto const& f : vFiles) { std::error_code e; nTotal += fs::file_size(f, e); }
-        for (size_t i = 0; i < vFiles.size() && nTotal > max_bytes; i++) {
-            std::error_code e;
-            nTotal -= fs::file_size(vFiles[i], e); fs::remove(vFiles[i], e);
-        }
-
-        Loader::get()->queueInMainThread([success] {
-            if (!CCDirector::get()->getRunningScene()) return;
-            if (success) {
-                Notification::create("Clip Saved!", CCSprite::createWithSpriteFrameName("GJ_completesIcon_001.png"))->show();
-                Gallery::refresh();
-            } else {
-                Notification::create("Save Failed!", CCSprite::createWithSpriteFrameName("GJ_deleteBtn_001.png"))->show();
-            }
-        });
-        co_return;
-    });
-}
-
 struct RecSession {
     ffmpeg::events::Recorder* rec = nullptr;
     std::thread* p_worker_thread = nullptr;
@@ -298,6 +42,8 @@ struct RecSession {
     int max_frames = 30;
     fs::path temp_file_p;
     bool b_saved = false;
+    int fps = 30;
+    std::atomic<int> frames_written{0};
 
     ~RecSession() {
         dead = true; m_cv.notify_all();
@@ -339,6 +85,10 @@ void finalize_and_save(std::shared_ptr<RecSession> s, std::string lvl, int att) 
 
     s->b_saved = true;
     Notification::create("Clipping...", CCSprite::createWithSpriteFrameName("GJ_completesIcon_001.png"))->show();
+
+    int fwritten = s->frames_written.load();
+    int fps = s->fps > 0 ? s->fps : 30;
+    double dur = (double)fwritten / (double)fps;
     save_clip(s->temp_file_p, lvl, att);
 }
 
@@ -456,6 +206,7 @@ class $modify(MyBaseGameLayer, GJBaseGameLayer) {
 
         std::shared_ptr<RecSession> s = std::make_shared<RecSession>();
         s->rec = p_rec; s->max_frames = max_f; s->temp_file_p = temp_p;
+    s->fps = (int)Mod::get()->getSettingValue<int64_t>("target-fps");
         m_fields->session = s;
         m_fields->nW = recW; m_fields->nH = recH;
         m_fields->active = true; m_fields->n_pushed_frames = 0;
@@ -497,7 +248,7 @@ class $modify(MyBaseGameLayer, GJBaseGameLayer) {
                     if (s->dead && s->c_pixel_q.empty()) break;
                     c_pixel = std::move(s->c_pixel_q.front()); s->c_pixel_q.pop();
                 }
-                (void)s->rec->writeFrame(c_pixel);
+                if (s->rec->writeFrame(c_pixel).isOk()) s->frames_written.fetch_add(1);
                 std::lock_guard<std::mutex> l(s->m_p_mtx);
                 std::lock_guard<std::mutex> lq(s->m_q_mtx);
                 if ((int)(s->pool_frames.size() + s->c_pixel_q.size()) < s->max_frames) {
@@ -564,8 +315,23 @@ class $modify(MyCCEGLView, CCEGLView) {
                 int recW = f->nW; int recH = f->nH;
                 int sz_bytes = recW * recH * 4;
 
-                CCSize fs2 = CCDirector::get()->getOpenGLView()->getFrameSize();
-                int winW = (int)fs2.width; int winH = (int)fs2.height;
+                // mac retina lies in getFrameSize, ask GL directly so blit src is real pixels
+                GLint vp[4] = {0, 0, 0, 0};
+                glGetIntegerv(GL_VIEWPORT, vp);
+                int winW = vp[2];
+                int winH = vp[3];
+                if (winW <= 0 || winH <= 0) {
+                    CCSize fs2 = CCDirector::get()->getOpenGLView()->getFrameSize();
+                    winW = (int)fs2.width; winH = (int)fs2.height;
+                }
+#ifdef GEODE_IS_MACOS
+                // bro retina displays are FUCKED the viewport is in POINTS not PIXELS
+                // only reason i added macos support is more damn downloads, regret already
+                extern float get_macos_backing_scale();
+                float scale = get_macos_backing_scale();
+                winW = (int)(winW * scale);
+                winH = (int)(winH * scale);
+#endif
 
                 if (!f->b_setup_done) {
                     glGenBuffers(3, f->pbo_bufer);
